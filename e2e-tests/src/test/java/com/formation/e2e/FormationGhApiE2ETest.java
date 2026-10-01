@@ -50,6 +50,9 @@ class FormationGhApiE2ETest {
     private WebDriver driver;
     private WebDriverWait wait;
 
+    /**
+     * Prépare le navigateur Chrome en mode headless avec la journalisation des erreurs.
+     */
     @BeforeEach
     void setUp() {
         setupChromeDriver();
@@ -95,6 +98,9 @@ class FormationGhApiE2ETest {
         }
     }
 
+    /**
+     * Ferme proprement le navigateur après chaque scénario.
+     */
     @AfterEach
     void tearDown() {
         if (driver != null) {
@@ -102,6 +108,9 @@ class FormationGhApiE2ETest {
         }
     }
 
+    /**
+     * Vérifie que la page d'accueil affiche la liste attendue des utilisateurs.
+     */
     @Test
     void laPageDAccueilAfficheLesUtilisateurs() {
         driver.get(APP_URL);
@@ -117,6 +126,9 @@ class FormationGhApiE2ETest {
         verifierConsoleSansErreur();
     }
 
+    /**
+     * Vérifie le parcours complet de consultation, création, rechargement et suppression d'un congé.
+     */
     @Test
     void unUtilisateurPeutPoserConsulterPuisSupprimerUnConge() {
         ouvrirUtilisateur(1);
@@ -146,6 +158,9 @@ class FormationGhApiE2ETest {
         verifierConsoleSansErreur();
     }
 
+    /**
+     * Vérifie qu'une période sans jour ouvré ne peut pas être validée.
+     */
     @Test
     void unePeriodeSansJourOuvreEstRefusee() {
         ouvrirUtilisateur(1);
@@ -160,6 +175,9 @@ class FormationGhApiE2ETest {
         verifierConsoleSansErreur();
     }
 
+    /**
+     * Vérifie qu'un congé en chevauchement affiche bien une erreur métier.
+     */
     @Test
     void unePeriodeQuiChevaucheUnCongeAfficheUneErreur() {
         ouvrirUtilisateur(1);
@@ -180,6 +198,9 @@ class FormationGhApiE2ETest {
         verifierConsoleSansErreur();
     }
 
+    /**
+     * Vérifie qu'une période trop longue désactive le bouton de validation.
+     */
     @Test
     void unePeriodeTropLongueDesactiveLeBouton() {
         ouvrirUtilisateur(1);
@@ -194,6 +215,9 @@ class FormationGhApiE2ETest {
         verifierConsoleSansErreur();
     }
 
+    /**
+     * Vérifie qu'une route inconnue affiche la page introuvable.
+     */
     @Test
     void lesRoutesInconnuesAffichentLaPageIntrouvable() {
         driver.get(APP_URL + "route-inconnue");
@@ -204,6 +228,9 @@ class FormationGhApiE2ETest {
         verifierConsoleSansErreur();
     }
 
+    /**
+     * Attend que la page d'accueil soit entièrement rendue et que la liste des utilisateurs apparaisse.
+     */
     private void attendreChargementAccueil() {
         wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("body")));
         wait.until(driver1 ->
@@ -211,6 +238,9 @@ class FormationGhApiE2ETest {
         wait.until(ExpectedConditions.numberOfElementsToBeMoreThan(By.cssSelector("a.user-card"), 0));
     }
 
+    /**
+     * Attend que l'écran détail utilisateur soit chargé avec les cartes de solde visibles.
+     */
     private void attendreChargementUtilisateur() {
         wait.until(ExpectedConditions.presenceOfElementLocated(By.tagName("body")));
         wait.until(driver1 ->
@@ -218,11 +248,17 @@ class FormationGhApiE2ETest {
         wait.until(driver1 -> !driver1.findElements(By.cssSelector(".balance-grid")).isEmpty());
     }
 
+    /**
+     * Ouvre la page de détail d'un utilisateur par identifiant.
+     */
     private void ouvrirUtilisateur(int id) {
         driver.get(APP_URL + "user/" + id);
         attendreChargementUtilisateur();
     }
 
+    /**
+     * Vérifie qu'aucune erreur console bloquante n'a été enregistrée.
+     */
     private void verifierConsoleSansErreur() {
         List<org.openqa.selenium.logging.LogEntry> consoleLogs = driver.manage().logs()
                 .get(LogType.BROWSER)
@@ -235,6 +271,9 @@ class FormationGhApiE2ETest {
                 "Des erreurs ont ete detectees dans la console du navigateur : " + consoleLogs);
     }
 
+    /**
+     * Vérifie les trois indicateurs de solde affichés dans la vue utilisateur.
+     */
     private void assertBalance(String solde, String acquis, String pris) {
         List<WebElement> cartes = driver.findElements(By.cssSelector(".balance-card strong"));
         assertEquals(3, cartes.size(), "La page utilisateur doit afficher 3 cartes de solde");
@@ -243,16 +282,25 @@ class FormationGhApiE2ETest {
         assertTrue(cartes.get(2).getText().startsWith(pris));
     }
 
+    /**
+     * Construit une période valide de trois jours ouvrés pour les tests.
+     */
     private PeriodeConge periodeValide() {
         LocalDate debut = prochainJour(DayOfWeek.MONDAY);
         return new PeriodeConge(debut, debut.plusDays(2));
     }
 
+    /**
+     * Construit une période volontairement trop longue pour déclencher la validation.
+     */
     private PeriodeConge periodeTropLongue() {
         LocalDate debut = prochainJour(DayOfWeek.MONDAY);
         return new PeriodeConge(debut, debut.plusDays(40));
     }
 
+    /**
+     * Retourne la prochaine date correspondant au jour de semaine demandé.
+     */
     private LocalDate prochainJour(DayOfWeek dayOfWeek) {
         LocalDate date = LocalDate.now().plusDays(1);
         while (date.getDayOfWeek() != dayOfWeek) {
@@ -261,12 +309,18 @@ class FormationGhApiE2ETest {
         return date;
     }
 
+    /**
+     * Renseigne les deux champs date du formulaire de congé.
+     */
     private void saisirPeriode(PeriodeConge periode) {
         List<WebElement> champsDate = driver.findElements(By.cssSelector("input[type='date']"));
         remplirChampDate(champsDate.get(0), periode.debut());
         remplirChampDate(champsDate.get(1), periode.fin());
     }
 
+    /**
+     * Injecte une date dans un champ HTML et déclenche les événements de saisie attendus.
+     */
     private void remplirChampDate(WebElement input, LocalDate date) {
         String value = date.format(ISO_DATE);
         ((JavascriptExecutor) driver).executeScript("""
@@ -276,18 +330,30 @@ class FormationGhApiE2ETest {
                 """, input, value);
     }
 
+    /**
+     * Retourne le bouton de validation du congé.
+     */
     private WebElement boutonPoserConge() {
         return driver.findElement(By.cssSelector("button.primary-button"));
     }
 
+    /**
+     * Compte le nombre de congés affichés dans l'historique.
+     */
     private int nombreConges() {
         return driver.findElements(By.cssSelector(".leave-row")).size();
     }
 
+    /**
+     * Attend que l'historique contienne exactement le nombre de congés attendu.
+     */
     private void attendreNombreConges(int nombreAttendu) {
         wait.until(ExpectedConditions.numberOfElementsToBe(By.cssSelector(".leave-row"), nombreAttendu));
     }
 
+    /**
+     * Supprime le premier congé affiché dans la liste.
+     */
     private void supprimerPremierConge() {
         driver.findElement(By.cssSelector(".delete-button")).click();
     }
