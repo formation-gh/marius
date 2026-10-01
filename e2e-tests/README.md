@@ -39,8 +39,16 @@ possible de forcer l'emplacement du driver via la variable d'environnement
 
 ## Exécuter les tests
 
+L'application requiert désormais un mot de passe. Pour l'exécution locale,
+définissez la variable d'environnement `E2E_APP_PASSWORD` avec le mot de passe
+de l'application. Pour GitHub Actions, configurez un secret de dépôt nommé
+`E2E_APP_PASSWORD` ; le workflow le transmet aux tests sans l'inclure dans le
+code source.
+
 ```bash
 cd e2e-tests
+read -s -p "Mot de passe de l'application : " E2E_APP_PASSWORD
+export E2E_APP_PASSWORD
 mvn test
 ```
 
