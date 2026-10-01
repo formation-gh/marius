@@ -3,6 +3,8 @@ package com.formation.e2e;
 import io.github.bonigarcia.wdm.WebDriverManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
 import org.openqa.selenium.By;
@@ -18,6 +20,8 @@ import org.openqa.selenium.logging.LoggingPreferences;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.DayOfWeek;
@@ -26,6 +30,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -45,6 +51,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FormationGhApiE2ETest {
 
     private static final String APP_URL = "https://aouzgaga.github.io/formation-gh-api/";
+    private static final Path REPORT_CSV = Paths.get("target", "reporting", "e2e-test-steps.csv");
 
     /**
      * Erreur connue et ignorée volontairement : le fichier CSS genere par Blazor
@@ -58,16 +65,31 @@ class FormationGhApiE2ETest {
     private WebDriverWait wait;
     private Path screenshotDirectory;
     private int screenshotIndex;
+    private String testMethodName;
+    private String testDisplayName;
+    private final List<StepResult> stepResults = new ArrayList<>();
+
+    @BeforeAll
+    static void initialiserRapport() throws IOException {
+        Files.createDirectories(REPORT_CSV.getParent());
+        Files.writeString(REPORT_CSV,
+                "test_method;test_case;step;status;detail;duration_ms" + System.lineSeparator(),
+                StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.TRUNCATE_EXISTING,
+                StandardOpenOption.WRITE);
+    }
 
     /**
      * Prépare le navigateur Chrome en mode headless avec la journalisation des erreurs.
      */
     @BeforeEach
     void setUp(TestInfo testInfo) {
-        String testName = testInfo.getTestMethod()
+        testMethodName = testInfo.getTestMethod()
                 .map(method -> method.getName())
                 .orElse(testInfo.getDisplayName());
-        screenshotDirectory = Paths.get("target", "screenshots", nettoyerNom(testName));
+        testDisplayName = testInfo.getDisplayName();
+        screenshotDirectory = Paths.get("target", "screenshots", nettoyerNom(testMethodName));
         try {
             Files.createDirectories(screenshotDirectory);
         } catch (Exception e) {
@@ -123,8 +145,12 @@ class FormationGhApiE2ETest {
      */
     @AfterEach
     void tearDown() {
-        if (driver != null) {
-            driver.quit();
+        try {
+            if (driver != null) {
+                driver.quit();
+            }
+        } finally {
+            ecrireRapportEtapes();
         }
     }
 
@@ -132,136 +158,203 @@ class FormationGhApiE2ETest {
      * Vérifie que la page d'accueil affiche la liste attendue des utilisateurs.
      */
     @Test
+    @DisplayName("La page d'accueil affiche les utilisateurs")
     void laPageDAccueilAfficheLesUtilisateurs() {
-        driver.get(APP_URL);
-        attendreChargementAccueil();
-        capturerCaptureEcran("page-accueil");
-
-        List<WebElement> cartesUtilisateurs = driver.findElements(By.cssSelector("a.user-card"));
-        assertEquals(3, cartesUtilisateurs.size(), "La page d'accueil doit lister 3 utilisateurs");
-        assertTrue(cartesUtilisateurs.get(0).getText().contains("Jean Dupont"));
-        assertTrue(cartesUtilisateurs.get(0).getText().contains("jean.dupont@formation.local"));
-        assertTrue(cartesUtilisateurs.get(1).getText().contains("Sophie Martin"));
-        assertTrue(cartesUtilisateurs.get(2).getText().contains("Luc Bernard"));
-
-        verifierConsoleSansErreur();
+        executerEtape("Charger la page d'accueil", () -> {
+            driver.get(APP_URL);
+            return "URL chargée";
+        });
+        executerEtape("Attendre le rendu de la page d'accueil", () -> {
+            attendreChargementAccueil();
+            return "Le body et les cartes utilisateurs sont visibles";
+        });
+        executerEtape("Capturer la page d'accueil", () -> "Capture enregistrée : " + capturerCaptureEcran("page-accueil"));
+        executerEtape("Vérifier la liste des utilisateurs", () -> {
+            List<WebElement> cartesUtilisateurs = driver.findElements(By.cssSelector("a.user-card"));
+            assertEquals(3, cartesUtilisateurs.size(), "La page d'accueil doit lister 3 utilisateurs");
+            assertTrue(cartesUtilisateurs.get(0).getText().contains("Jean Dupont"));
+            assertTrue(cartesUtilisateurs.get(0).getText().contains("jean.dupont@formation.local"));
+            assertTrue(cartesUtilisateurs.get(1).getText().contains("Sophie Martin"));
+            assertTrue(cartesUtilisateurs.get(2).getText().contains("Luc Bernard"));
+            return "3 utilisateurs trouvés";
+        });
+        executerEtape("Vérifier la console navigateur", () -> {
+            verifierConsoleSansErreur();
+            return "Aucune erreur console bloquante";
+        });
     }
 
     /**
      * Vérifie le parcours complet de consultation, création, rechargement et suppression d'un congé.
      */
     @Test
+    @DisplayName("Un utilisateur peut poser, recharger puis supprimer un congé")
     void unUtilisateurPeutPoserConsulterPuisSupprimerUnConge() {
-        ouvrirUtilisateur(1);
-        capturerCaptureEcran("detail-utilisateur");
-
-        assertTrue(driver.getTitle().contains("Jean Dupont"));
-        assertTrue(driver.findElement(By.cssSelector("h1")).getText().contains("Jean Dupont"));
-        assertTrue(driver.findElement(By.cssSelector(".back-link")).getText().contains("Tous les utilisateurs"));
-        assertBalance("25", "25", "0");
-
-        PeriodeConge periode = periodeValide();
-        saisirPeriode(periode);
-        capturerCaptureEcran("periode-saisie");
-        assertTrue(boutonPoserConge().isEnabled());
-        boutonPoserConge().click();
-
-        attendreNombreConges(1);
-        capturerCaptureEcran("conge-pose");
-        assertBalance("22", "25", "3");
-        assertTrue(driver.findElement(By.cssSelector(".leave-row")).getText().contains("3 jour(s) ouvré(s)"));
-
-        driver.navigate().refresh();
-        attendreChargementUtilisateur();
-        capturerCaptureEcran("apres-rechargement");
-        assertEquals(1, nombreConges());
-
-        supprimerPremierConge();
-        attendreNombreConges(0);
-        capturerCaptureEcran("conge-supprime");
-        assertBalance("25", "25", "0");
-
-        verifierConsoleSansErreur();
+        executerEtape("Ouvrir la fiche utilisateur", () -> {
+            ouvrirUtilisateur(1);
+            return "Utilisateur 1 chargé";
+        });
+        executerEtape("Capturer la fiche utilisateur", () -> "Capture enregistrée : " + capturerCaptureEcran("detail-utilisateur"));
+        executerEtape("Vérifier l'entête et les soldes initiaux", () -> {
+            assertTrue(driver.getTitle().contains("Jean Dupont"));
+            assertTrue(driver.findElement(By.cssSelector("h1")).getText().contains("Jean Dupont"));
+            assertTrue(driver.findElement(By.cssSelector(".back-link")).getText().contains("Tous les utilisateurs"));
+            assertBalance("25", "25", "0");
+            return "Soldes initiaux vérifiés";
+        });
+        executerEtape("Saisir une période de congé valide", () -> {
+            saisirPeriode(periodeValide());
+            return "Période de 3 jours ouvrés saisie";
+        });
+        executerEtape("Capturer la période saisie", () -> "Capture enregistrée : " + capturerCaptureEcran("periode-saisie"));
+        executerEtape("Valider le congé et vérifier l'ajout", () -> {
+            assertTrue(boutonPoserConge().isEnabled());
+            boutonPoserConge().click();
+            attendreNombreConges(1);
+            assertBalance("22", "25", "3");
+            assertTrue(driver.findElement(By.cssSelector(".leave-row")).getText().contains("3 jour(s) ouvré(s)"));
+            return "Conge posé et soldes mis à jour";
+        });
+        executerEtape("Capturer le congé posé", () -> "Capture enregistrée : " + capturerCaptureEcran("conge-pose"));
+        executerEtape("Recharger la page et vérifier la persistance", () -> {
+            driver.navigate().refresh();
+            attendreChargementUtilisateur();
+            assertEquals(1, nombreConges());
+            return "Congé conservé après rechargement";
+        });
+        executerEtape("Capturer l'état après rechargement", () -> "Capture enregistrée : " + capturerCaptureEcran("apres-rechargement"));
+        executerEtape("Supprimer le congé et vérifier le retour à l'état initial", () -> {
+            supprimerPremierConge();
+            attendreNombreConges(0);
+            assertBalance("25", "25", "0");
+            return "Congé supprimé";
+        });
+        executerEtape("Capturer l'état final", () -> "Capture enregistrée : " + capturerCaptureEcran("conge-supprime"));
+        executerEtape("Vérifier la console navigateur", () -> {
+            verifierConsoleSansErreur();
+            return "Aucune erreur console bloquante";
+        });
     }
 
     /**
      * Vérifie qu'une période sans jour ouvré ne peut pas être validée.
      */
     @Test
+    @DisplayName("Une période sans jour ouvré est refusée")
     void unePeriodeSansJourOuvreEstRefusee() {
-        ouvrirUtilisateur(1);
-        capturerCaptureEcran("detail-utilisateur");
-
-        LocalDate samedi = prochainJour(DayOfWeek.SATURDAY);
-        saisirPeriode(new PeriodeConge(samedi, samedi.plusDays(1)));
-        capturerCaptureEcran("periode-sans-jour-ouvree");
-
-        assertFalse(boutonPoserConge().isEnabled());
-        assertTrue(driver.findElement(By.cssSelector(".form-hint")).getText()
-                .contains("Choisissez une période contenant au moins un jour ouvré."));
-
-        verifierConsoleSansErreur();
+        executerEtape("Ouvrir la fiche utilisateur", () -> {
+            ouvrirUtilisateur(1);
+            return "Utilisateur 1 chargé";
+        });
+        executerEtape("Capturer la fiche utilisateur", () -> "Capture enregistrée : " + capturerCaptureEcran("detail-utilisateur"));
+        executerEtape("Saisir une période sans jour ouvré", () -> {
+            LocalDate samedi = prochainJour(DayOfWeek.SATURDAY);
+            saisirPeriode(new PeriodeConge(samedi, samedi.plusDays(1)));
+            return "Période couvrant uniquement le week-end saisie";
+        });
+        executerEtape("Capturer la période refusée", () -> "Capture enregistrée : " + capturerCaptureEcran("periode-sans-jour-ouvree"));
+        executerEtape("Vérifier le refus de validation", () -> {
+            assertFalse(boutonPoserConge().isEnabled());
+            assertTrue(driver.findElement(By.cssSelector(".form-hint")).getText()
+                    .contains("Choisissez une période contenant au moins un jour ouvré."));
+            return "Bouton de validation désactivé";
+        });
+        executerEtape("Vérifier la console navigateur", () -> {
+            verifierConsoleSansErreur();
+            return "Aucune erreur console bloquante";
+        });
     }
 
     /**
      * Vérifie qu'un congé en chevauchement affiche bien une erreur métier.
      */
     @Test
+    @DisplayName("Une période qui chevauche un congé affiche une erreur")
     void unePeriodeQuiChevaucheUnCongeAfficheUneErreur() {
-        ouvrirUtilisateur(1);
-        capturerCaptureEcran("detail-utilisateur");
-
-        PeriodeConge periode = periodeValide();
-        saisirPeriode(periode);
-        capturerCaptureEcran("premier-conge-saisi");
-        boutonPoserConge().click();
-        attendreNombreConges(1);
-        capturerCaptureEcran("premier-conge-pose");
-
-        saisirPeriode(periode);
-        capturerCaptureEcran("deuxieme-conge-saisi");
-        boutonPoserConge().click();
-
-        wait.until(ExpectedConditions.textToBePresentInElementLocated(
-                By.cssSelector(".error-message"),
-                "chevauche un congé déjà posé"));
-        capturerCaptureEcran("erreur-chevauchement");
-        assertEquals(1, nombreConges());
-
-        verifierConsoleSansErreur();
+        executerEtape("Ouvrir la fiche utilisateur", () -> {
+            ouvrirUtilisateur(1);
+            return "Utilisateur 1 chargé";
+        });
+        executerEtape("Capturer la fiche utilisateur", () -> "Capture enregistrée : " + capturerCaptureEcran("detail-utilisateur"));
+        executerEtape("Poser un premier congé", () -> {
+            PeriodeConge periode = periodeValide();
+            saisirPeriode(periode);
+            boutonPoserConge().click();
+            attendreNombreConges(1);
+            return "Premier congé posé";
+        });
+        executerEtape("Capturer le premier congé", () -> "Capture enregistrée : " + capturerCaptureEcran("premier-conge-pose"));
+        executerEtape("Tenter un congé chevauchant", () -> {
+            PeriodeConge periode = periodeValide();
+            saisirPeriode(periode);
+            boutonPoserConge().click();
+            wait.until(ExpectedConditions.textToBePresentInElementLocated(
+                    By.cssSelector(".error-message"),
+                    "chevauche un congé déjà posé"));
+            return "Message d'erreur affiché";
+        });
+        executerEtape("Capturer l'erreur de chevauchement", () -> "Capture enregistrée : " + capturerCaptureEcran("erreur-chevauchement"));
+        executerEtape("Vérifier que le congé existant est conservé", () -> {
+            assertEquals(1, nombreConges());
+            return "Un seul congé reste affiché";
+        });
+        executerEtape("Vérifier la console navigateur", () -> {
+            verifierConsoleSansErreur();
+            return "Aucune erreur console bloquante";
+        });
     }
 
     /**
      * Vérifie qu'une période trop longue désactive le bouton de validation.
      */
     @Test
+    @DisplayName("Une période trop longue désactive le bouton")
     void unePeriodeTropLongueDesactiveLeBouton() {
-        ouvrirUtilisateur(1);
-        capturerCaptureEcran("detail-utilisateur");
-
-        PeriodeConge periode = periodeTropLongue();
-        saisirPeriode(periode);
-        capturerCaptureEcran("periode-trop-longue");
-
-        assertFalse(boutonPoserConge().isEnabled());
-        assertTrue(driver.findElement(By.cssSelector(".form-hint")).getText()
-                .contains("jour(s) ouvré(s) sélectionné(s)"));
-
-        verifierConsoleSansErreur();
+        executerEtape("Ouvrir la fiche utilisateur", () -> {
+            ouvrirUtilisateur(1);
+            return "Utilisateur 1 chargé";
+        });
+        executerEtape("Capturer la fiche utilisateur", () -> "Capture enregistrée : " + capturerCaptureEcran("detail-utilisateur"));
+        executerEtape("Saisir une période trop longue", () -> {
+            saisirPeriode(periodeTropLongue());
+            return "Période de 41 jours saisie";
+        });
+        executerEtape("Capturer la période trop longue", () -> "Capture enregistrée : " + capturerCaptureEcran("periode-trop-longue"));
+        executerEtape("Vérifier la désactivation du bouton", () -> {
+            assertFalse(boutonPoserConge().isEnabled());
+            assertTrue(driver.findElement(By.cssSelector(".form-hint")).getText()
+                    .contains("jour(s) ouvré(s) sélectionné(s)"));
+            return "Bouton de validation désactivé";
+        });
+        executerEtape("Vérifier la console navigateur", () -> {
+            verifierConsoleSansErreur();
+            return "Aucune erreur console bloquante";
+        });
     }
 
     /**
      * Vérifie qu'une route inconnue affiche la page introuvable.
      */
     @Test
+    @DisplayName("Les routes inconnues affichent la page introuvable")
     void lesRoutesInconnuesAffichentLaPageIntrouvable() {
-        driver.get(APP_URL + "route-inconnue");
-
-        wait.until(ExpectedConditions.textToBePresentInElementLocated(By.tagName("h1"), "Page introuvable"));
-        capturerCaptureEcran("page-introuvable");
-        assertTrue(driver.findElement(By.tagName("body")).getText().contains("La page demandée n’existe pas."));
-
-        verifierConsoleSansErreur();
+        executerEtape("Ouvrir une route inconnue", () -> {
+            driver.get(APP_URL + "route-inconnue");
+            return "Route inconnue chargée";
+        });
+        executerEtape("Attendre la page introuvable", () -> {
+            wait.until(ExpectedConditions.textToBePresentInElementLocated(By.tagName("h1"), "Page introuvable"));
+            return "Message d'erreur de navigation affiché";
+        });
+        executerEtape("Capturer la page introuvable", () -> "Capture enregistrée : " + capturerCaptureEcran("page-introuvable"));
+        executerEtape("Vérifier le contenu de la page introuvable", () -> {
+            assertTrue(driver.findElement(By.tagName("body")).getText().contains("La page demandée n’existe pas."));
+            return "Page introuvable conforme";
+        });
+        executerEtape("Vérifier la console navigateur", () -> {
+            verifierConsoleSansErreur();
+            return "Aucune erreur console bloquante";
+        });
     }
 
     /**
@@ -316,6 +409,92 @@ class FormationGhApiE2ETest {
         assertTrue(cartes.get(0).getText().startsWith(solde));
         assertTrue(cartes.get(1).getText().startsWith(acquis));
         assertTrue(cartes.get(2).getText().startsWith(pris));
+    }
+
+    /**
+     * Exécute une étape de test, en capture le résultat et sa durée.
+     */
+    private void executerEtape(String etape, ThrowingSupplier<String> action) {
+        long debut = System.nanoTime();
+        try {
+            String detail = action.get();
+            stepResults.add(new StepResult(etape, "SUCCES", detail == null ? "" : detail, dureeMs(debut)));
+        } catch (Throwable throwable) {
+            stepResults.add(new StepResult(etape, "ECHEC", messageErreur(throwable), dureeMs(debut)));
+            rethrowUnchecked(throwable);
+        }
+    }
+
+    /**
+     * Retourne la durée d'exécution d'une étape en millisecondes.
+     */
+    private long dureeMs(long debutNano) {
+        return Math.max(0L, (System.nanoTime() - debutNano) / 1_000_000L);
+    }
+
+    /**
+     * Renvoie un message d'erreur exploitable dans le fichier de suivi.
+     */
+    private String messageErreur(Throwable throwable) {
+        if (throwable.getMessage() != null && !throwable.getMessage().isBlank()) {
+            return throwable.getMessage();
+        }
+        return throwable.getClass().getSimpleName();
+    }
+
+    /**
+     * Réécrit proprement une exception non vérifiée.
+     */
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void rethrowUnchecked(Throwable throwable) throws T {
+        throw (T) throwable;
+    }
+
+    /**
+     * Ecrit les résultats du scénario courant dans un fichier CSV.
+     */
+    private void ecrireRapportEtapes() {
+        if (stepResults.isEmpty()) {
+            return;
+        }
+
+        List<String> lignes = new ArrayList<>();
+        for (StepResult stepResult : stepResults) {
+            lignes.add(String.join(";",
+                    csvEscape(testMethodName),
+                    csvEscape(testDisplayName),
+                    csvEscape(stepResult.step()),
+                    csvEscape(stepResult.status()),
+                    csvEscape(stepResult.detail()),
+                    Long.toString(stepResult.durationMs())));
+        }
+
+        try {
+            Files.writeString(REPORT_CSV,
+                    String.join(System.lineSeparator(), lignes) + System.lineSeparator(),
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            throw new IllegalStateException("Impossible d'écrire le rapport de test CSV", e);
+        } finally {
+            stepResults.clear();
+        }
+    }
+
+    /**
+     * Echappe une valeur au format CSV.
+     */
+    private String csvEscape(String valeur) {
+        if (valeur == null) {
+            return "";
+        }
+
+        String echappee = valeur.replace("\"", "\"\"");
+        if (echappee.contains(";") || echappee.contains("\"") || echappee.contains("\n") || echappee.contains("\r")) {
+            return "\"" + echappee + "\"";
+        }
+        return echappee;
     }
 
     /**
@@ -397,9 +576,9 @@ class FormationGhApiE2ETest {
     /**
      * Capture une image de l'état courant du test.
      */
-    private void capturerCaptureEcran(String etape) {
+    private String capturerCaptureEcran(String etape) {
         if (!(driver instanceof TakesScreenshot takesScreenshot)) {
-            return;
+            return "";
         }
 
         screenshotIndex++;
@@ -410,6 +589,7 @@ class FormationGhApiE2ETest {
         } catch (Exception e) {
             throw new IllegalStateException("Impossible de capturer la capture d'écran " + nomFichier, e);
         }
+        return destination.toString();
     }
 
     /**
@@ -421,6 +601,17 @@ class FormationGhApiE2ETest {
                 .replaceAll("^-+|-+$", "");
     }
 
+    /**
+     * Représente une étape de test.
+     */
+    private record StepResult(String step, String status, String detail, long durationMs) {
+    }
+
     private record PeriodeConge(LocalDate debut, LocalDate fin) {
+    }
+
+    @FunctionalInterface
+    private interface ThrowingSupplier<T> {
+        T get() throws Exception;
     }
 }
