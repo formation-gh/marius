@@ -33,6 +33,8 @@ jobs:
           (google-chrome --version || chromium --version || chromium-browser --version)
 
       - name: Run E2E tests
+        env:
+          E2E_APP_PASSWORD: ${{ secrets.E2E_APP_PASSWORD }}
         run: mvn test
 
       - name: Generate test reports

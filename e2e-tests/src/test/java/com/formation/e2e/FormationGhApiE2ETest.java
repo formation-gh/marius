@@ -17,6 +17,7 @@ import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.logging.LogType;
 import org.openqa.selenium.logging.LoggingPreferences;
+import org.openqa.selenium.support.ui.ExpectedCondition;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
@@ -161,7 +162,7 @@ class FormationGhApiE2ETest {
     @DisplayName("La page d'accueil affiche les utilisateurs")
     void laPageDAccueilAfficheLesUtilisateurs() {
         executerEtape("Charger la page d'accueil", () -> {
-            driver.get(APP_URL);
+            ouvrirPage(APP_URL, driver1 -> !driver1.findElements(By.cssSelector("a.user-card")).isEmpty());
             return "URL chargée";
         });
         executerEtape("Attendre le rendu de la page d'accueil", () -> {
@@ -218,6 +219,7 @@ class FormationGhApiE2ETest {
         executerEtape("Capturer le congé posé", () -> "Capture enregistrée : " + capturerCaptureEcran("conge-pose"));
         executerEtape("Recharger la page et vérifier la persistance", () -> {
             driver.navigate().refresh();
+            authentifierSiNecessaire(driver1 -> !driver1.findElements(By.cssSelector(".balance-grid")).isEmpty());
             attendreChargementUtilisateur();
             assertEquals(1, nombreConges());
             return "Congé conservé après rechargement";
@@ -339,7 +341,8 @@ class FormationGhApiE2ETest {
     @DisplayName("Les routes inconnues affichent la page introuvable")
     void lesRoutesInconnuesAffichentLaPageIntrouvable() {
         executerEtape("Ouvrir une route inconnue", () -> {
-            driver.get(APP_URL + "route-inconnue");
+            ouvrirPage(APP_URL + "route-inconnue", driver1 -> driver1.findElements(By.tagName("h1")).stream()
+                    .anyMatch(heading -> heading.getText().contains("Page introuvable")));
             return "Route inconnue chargée";
         });
         executerEtape("Attendre la page introuvable", () -> {
@@ -381,8 +384,33 @@ class FormationGhApiE2ETest {
      * Ouvre la page de détail d'un utilisateur par identifiant.
      */
     private void ouvrirUtilisateur(int id) {
-        driver.get(APP_URL + "user/" + id);
+        ouvrirPage(APP_URL + "user/" + id,
+                driver1 -> !driver1.findElements(By.cssSelector(".balance-grid")).isEmpty());
         attendreChargementUtilisateur();
+    }
+
+    private void ouvrirPage(String url, ExpectedCondition<Boolean> pageChargee) {
+        driver.get(url);
+        authentifierSiNecessaire(pageChargee);
+    }
+
+    private void authentifierSiNecessaire(ExpectedCondition<Boolean> pageChargee) {
+        wait.until(driver1 -> !driver1.findElements(By.cssSelector("input[type='password']")).isEmpty()
+                || pageChargee.apply(driver1));
+
+        List<WebElement> champsMotDePasse = driver.findElements(By.cssSelector("input[type='password']"));
+        if (champsMotDePasse.isEmpty()) {
+            return;
+        }
+
+        String motDePasse = System.getenv("E2E_APP_PASSWORD");
+        if (motDePasse == null || motDePasse.isBlank()) {
+            throw new IllegalStateException("La variable d'environnement E2E_APP_PASSWORD est requise.");
+        }
+
+        champsMotDePasse.get(0).sendKeys(motDePasse);
+        driver.findElement(By.cssSelector(".auth-card button[type='submit']")).click();
+        wait.until(pageChargee);
     }
 
     /**
