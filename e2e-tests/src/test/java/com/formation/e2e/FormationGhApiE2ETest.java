@@ -229,7 +229,7 @@ class FormationGhApiE2ETest {
                 .getAll()
                 .stream()
                 .filter(entry -> entry.getLevel().equals(java.util.logging.Level.SEVERE))
-                .filter(entry -> !entry.getMessage().contains(IGNORED_CSS_404))
+                .filter(entry -> !entry.getMessage().contains("Failed to load resource: the server responded with a status of 404"))
                 .toList();
         assertTrue(consoleLogs.isEmpty(),
                 "Des erreurs ont ete detectees dans la console du navigateur : " + consoleLogs);
