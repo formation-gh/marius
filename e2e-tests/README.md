@@ -58,5 +58,5 @@ Le workflow produit aussi, dans les artefacts d'exécution :
 
 - un fichier CSV des étapes de test exécutées ;
 - un fichier Excel récapitulatif des cas de test et de leurs étapes ;
-- un PV de recette métier au format PDF, directement réutilisable dans un document ou un mail de validation ;
+- un PV de recette métier au format Word (.docx) et PDF, directement réutilisable dans un document ou un mail de validation ;
 - les captures d'écran des scénarios E2E.

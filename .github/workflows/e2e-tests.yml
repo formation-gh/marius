@@ -35,6 +35,7 @@ jobs:
       - name: Run E2E tests
         env:
           E2E_APP_PASSWORD: ${{ secrets.E2E_APP_PASSWORD }}
+          PV_PROJECT_NAME: formation-gh-api
         run: mvn test
 
       - name: Generate test reports
@@ -49,5 +50,6 @@ jobs:
           path: |
             e2e-tests/target/reporting/*.csv
             e2e-tests/target/reporting/*.xlsx
+            e2e-tests/target/reporting/*.docx
             e2e-tests/target/reporting/*.pdf
             e2e-tests/target/screenshots/**
