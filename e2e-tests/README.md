@@ -64,9 +64,19 @@ mvn test
 
 ## Rapports générés par la GitHub Action
 
-Le workflow produit aussi, dans les artefacts d'exécution :
+Le workflow produit un rapport complet consultable **directement sur GitHub**,
+sans avoir à télécharger de fichier ZIP :
 
+- un résumé des scénarios (statuts, étapes réussies, durées) affiché
+  directement dans le **Job Summary** de l'exécution GitHub Actions ;
+- une page HTML (`index.html`) publiée sur **GitHub Pages** (lien ajouté dans
+  le Job Summary lors des push sur `main`), affichant le détail des scénarios
+  ainsi que les captures d'écran intégrées, avec des liens vers les livrables ;
 - un fichier CSV des étapes de test exécutées ;
 - un fichier Excel récapitulatif des cas de test et de leurs étapes ;
 - un PV de recette métier au format Word (.docx) et PDF, directement réutilisable dans un document ou un mail de validation ;
 - les captures d'écran des scénarios E2E.
+
+Ces fichiers restent également disponibles en archive ZIP (artefact
+`e2e-test-reports`) en sauvegarde, mais ce n'est plus nécessaire pour
+consulter les résultats.
