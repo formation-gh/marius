@@ -15,7 +15,7 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
 
     defaults:
       run:
@@ -45,6 +45,19 @@ jobs:
       - name: Generate test reports
         if: always()
         run: python3 scripts/generate_test_reports.py
+
+      - name: Publier l'historique des exécutions
+        if: always() && github.event_name == 'push'
+        run: |
+          if [ -n "$(git status --porcelain -- history/history.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add history/history.json
+            git commit -m "chore: mise à jour de l'historique des tests E2E [skip ci]"
+            git push
+          else
+            echo "Historique inchangé, rien à committer."
+          fi
 
       - name: Publier le résumé dans le Job Summary
         if: always()
