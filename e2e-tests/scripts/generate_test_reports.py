@@ -817,6 +817,10 @@ APP_JS = """
     return div.innerHTML;
   }
 
+  function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   function filteredScenarios() {
     if (currentFilter === 'all') { return scenarios; }
     return scenarios.filter(function (s) { return s.status === currentFilter; });
@@ -863,7 +867,8 @@ APP_JS = """
       return '<p class="empty">Aucune capture d\\'écran.</p>';
     }
     return '<div class="screenshots">' + screenshots.map(function (src) {
-      return '<a href="' + src + '" target="_blank"><img class="thumb" loading="lazy" src="' + src + '" alt=""></a>';
+      var safeSrc = escapeAttr(src);
+      return '<a href="' + safeSrc + '" target="_blank"><img class="thumb" loading="lazy" src="' + safeSrc + '" alt=""></a>';
     }).join('') + '</div>';
   }
 
