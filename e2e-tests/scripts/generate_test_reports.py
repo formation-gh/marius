@@ -17,6 +17,7 @@ REPORT_DIR = ROOT / "target" / "reporting"
 CSV_PATH = REPORT_DIR / "e2e-test-steps.csv"
 SUREFIRE_DIR = ROOT / "target" / "surefire-reports"
 XLSX_PATH = REPORT_DIR / "pv-recette-tests.xlsx"
+DOCX_PATH = REPORT_DIR / "pv-recette-tests.docx"
 PDF_PATH = REPORT_DIR / "pv-recette-tests.pdf"
 DEFAULT_PROJECT_NAME = "formation-gh-api"
 DEFAULT_TARGET_URL = "https://aouzgaga.github.io/formation-gh-api/"
@@ -82,9 +83,11 @@ def main() -> None:
     detail_rows = step_rows or fallback_detail_rows(xml_cases)
 
     write_xlsx(XLSX_PATH, summaries, detail_rows)
+    write_docx(DOCX_PATH, metadata, summaries, scenarios, detail_rows)
     write_pdf(PDF_PATH, metadata, summaries, scenarios)
 
     print(f"Excel généré : {XLSX_PATH}")
+    print(f"Word généré : {DOCX_PATH}")
     print(f"PDF généré : {PDF_PATH}")
 
 
@@ -467,6 +470,501 @@ def write_xlsx(path: Path, summaries: list[TestCaseSummary], detail_rows: list[S
             "xl/worksheets/sheet2.xml",
             worksheet_xml(detail_headers, detail_data, detail_widths),
         )
+
+
+def write_docx(
+    path: Path,
+    metadata: ReportMetadata,
+    summaries: list[TestCaseSummary],
+    scenarios: list[ScenarioReport],
+    detail_rows: list[StepRow],
+) -> None:
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", docx_content_types_xml())
+        archive.writestr("_rels/.rels", docx_root_rels_xml())
+        archive.writestr("docProps/core.xml", docx_core_xml(metadata))
+        archive.writestr("docProps/app.xml", docx_app_xml())
+        archive.writestr("word/document.xml", docx_document_xml(metadata, summaries, scenarios, detail_rows))
+        archive.writestr("word/styles.xml", docx_styles_xml())
+        archive.writestr("word/settings.xml", docx_settings_xml())
+        archive.writestr("word/_rels/document.xml.rels", docx_document_rels_xml())
+
+
+def docx_document_xml(
+    metadata: ReportMetadata,
+    summaries: list[TestCaseSummary],
+    scenarios: list[ScenarioReport],
+    detail_rows: list[StepRow],
+) -> str:
+    passed_cases = sum(1 for item in scenarios if item.status == "OK")
+    failed_cases = sum(1 for item in scenarios if item.status == "KO")
+    partial_cases = sum(1 for item in scenarios if item.status == "Partiel")
+    anomalies = [scenario for scenario in scenarios if scenario.status != "OK"]
+    decision = docx_decision_label(passed_cases, failed_cases, partial_cases)
+    if failed_cases:
+        decision_color = "B91C1C"
+    elif partial_cases:
+        decision_color = "C2410C"
+    else:
+        decision_color = "166534"
+
+    blocks: list[str] = []
+    blocks.extend([
+        docx_paragraph("🧪 PV DE RECETTE", align="center", bold=True, color="FFFFFF", size=34, shading="1F4E79", spacing_before=120, spacing_after=120),
+        docx_paragraph(metadata.project_name, align="center", bold=True, color="0F4C81", size=24, spacing_after=80),
+        docx_paragraph("Présentation commerciale et validation métier automatisée", align="center", color="475569", size=16, spacing_after=160),
+        docx_paragraph("🎯 Plan de test • 📋 Stratégie de test • ✅ Étapes de test • ✨ Scénarios Gherkin", align="center", color="0F766E", size=12, spacing_after=220),
+        docx_table(
+            [
+                ["Projet", metadata.project_name],
+                ["Lot / version", f"{metadata.version_label} / {metadata.lot_name}"],
+                ["Environnement", metadata.environment],
+                ["URL cible", metadata.target_url],
+                ["Référence d'exécution", metadata.execution_reference],
+                ["Date de recette", metadata.recipe_date],
+                ["Date de génération", metadata.generation_date],
+            ],
+            widths=[2800, 6226],
+            header_fill="0F766E",
+            header_text="FFFFFF",
+            body_fill="F8FAFC",
+            body_text="1F2937",
+        ),
+        docx_paragraph(" ", spacing_after=120),
+        docx_paragraph("🟦 Vue d'ensemble", bold=True, color="1F4E79", size=20, spacing_before=120, spacing_after=60),
+        docx_paragraph("Le document synthétise les tests de recette, les parcours couverts, le plan de test associé et les scénarios en Gherkin destinés à la présentation commerciale.", color="334155", size=11, spacing_after=120),
+        docx_page_break(),
+        docx_paragraph("1. Contexte et objectifs", bold=True, color="1F4E79", size=20, spacing_after=60),
+        docx_paragraph("🧭 Contexte métier", bold=True, color="0F766E", size=13, spacing_after=20),
+        docx_paragraph("Le PV de recette formalise la validation des parcours critiques de l'application et rend la lecture accessible à un interlocuteur métier ou commercial.", color="334155", size=11, spacing_after=80),
+        docx_paragraph("📋 Stratégie de test", bold=True, color="0F766E", size=13, spacing_after=20),
+        docx_bullet("Vérifier les parcours principaux dans un navigateur réel en mode automatique."),
+        docx_bullet("Contrôler les règles métier visibles par l'utilisateur final."),
+        docx_bullet("Tracer les étapes de test et les résultats obtenus pour chaque scénario."),
+        docx_bullet("Produire un document lisible, réutilisable dans une validation commerciale."),
+        docx_paragraph(" ", spacing_after=60),
+        docx_paragraph("2. Plan de test", bold=True, color="1F4E79", size=20, spacing_after=60),
+        docx_table(
+            [
+                ["Scénario", "Statut", "Étapes", "Succès", "Échecs", "Durée", "Commentaire"],
+            ]
+            + [
+                [
+                    item.case,
+                    docx_status_icon(item.status),
+                    str(item.steps_total),
+                    str(item.steps_success),
+                    str(item.steps_failure),
+                    f"{item.duration_ms} ms" if item.duration_ms else "n/a",
+                    item.comment,
+                ]
+                for item in summaries
+            ],
+            widths=[2600, 1000, 900, 900, 900, 1100, 1626],
+            header_fill="1F4E79",
+            header_text="FFFFFF",
+            body_fill="FFFFFF",
+            body_text="1F2937",
+        ),
+        docx_paragraph(" ", spacing_after=80),
+        docx_paragraph("3. Étapes de test", bold=True, color="1F4E79", size=20, spacing_after=60),
+        docx_table(
+            [["Cas de test", "Étape", "Statut", "Détail", "Durée"]] + [
+                [
+                    row.case,
+                    row.step,
+                    docx_status_icon(row.status),
+                    row.detail,
+                    f"{row.duration_ms} ms" if row.duration_ms else "n/a",
+                ]
+                for row in detail_rows
+            ],
+            widths=[2200, 2200, 1000, 2426, 1200],
+            header_fill="0F766E",
+            header_text="FFFFFF",
+            body_fill="F8FAFC",
+            body_text="1F2937",
+        ),
+        docx_paragraph(" ", spacing_after=80),
+        docx_paragraph("4. Scénarios Gherkin", bold=True, color="1F4E79", size=20, spacing_after=60),
+        docx_table(
+            [["Scénario", "Gherkin"]] + [
+                [scenario.title, build_gherkin_text(scenario)]
+                for scenario in scenarios
+            ],
+            widths=[2400, 6626],
+            header_fill="1F4E79",
+            header_text="FFFFFF",
+            body_fill="F8FAFC",
+            body_text="1F2937",
+        ),
+    ])
+
+    blocks.extend([
+        docx_paragraph(" ", spacing_after=60),
+        docx_paragraph("5. Synthèse et décision", bold=True, color="1F4E79", size=20, spacing_after=60),
+        docx_table(
+            [
+                ["Tests OK", "Tests KO", "Tests partiels", "Décision"],
+                [str(passed_cases), str(failed_cases), str(partial_cases), f"{decision}"],
+            ],
+            widths=[1800, 1800, 1800, 3626],
+            header_fill="1F4E79",
+            header_text="FFFFFF",
+            body_fill="FFFFFF",
+            body_text=decision_color,
+        ),
+    ])
+
+    if anomalies:
+        blocks.extend([
+            docx_paragraph("Réserves / anomalies", bold=True, color="B45309", size=13, spacing_before=40, spacing_after=20),
+            docx_table(
+                [["Description", "Impact métier", "Priorité"]] + [
+                    [
+                        scenario.title,
+                        scenario.objective if scenario.objective != "À confirmer." else "Impact métier à confirmer.",
+                        "Haute" if scenario.status == "KO" else "Moyenne",
+                    ]
+                    for scenario in anomalies
+                ],
+                widths=[3600, 3626, 1800],
+                header_fill="B45309",
+                header_text="FFFFFF",
+                body_fill="FFF7ED",
+                body_text="7C2D12",
+            ),
+        ])
+    else:
+        blocks.append(docx_paragraph("Aucune réserve bloquante ni anomalie métier n'a été constatée.", color="166534", size=11, spacing_after=60))
+
+    blocks.extend([
+        docx_paragraph("6. Validation", bold=True, color="1F4E79", size=20, spacing_before=40, spacing_after=60),
+        docx_table(
+            [
+                ["Nom", metadata.validation_name],
+                ["Rôle", metadata.validation_role],
+                ["Date", metadata.recipe_date],
+                ["Signature", metadata.validation_signature],
+            ],
+            widths=[1800, 7226],
+            header_fill="0F766E",
+            header_text="FFFFFF",
+            body_fill="F8FAFC",
+            body_text="1F2937",
+        ),
+    ])
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f"<w:body>{''.join(blocks)}{docx_section_properties()}</w:body>"
+        '</w:document>'
+    )
+
+
+def docx_decision_label(passed_cases: int, failed_cases: int, partial_cases: int) -> str:
+    if failed_cases:
+        return "🔴 Recette refusée"
+    if partial_cases:
+        return "🟠 Recette validée avec réserves"
+    return "🟢 Recette validée"
+
+
+def build_gherkin_text(scenario: ScenarioReport) -> str:
+    normalized = scenario.title.lower()
+    if "accueil" in normalized or "utilisateurs" in normalized:
+        lines = [
+            "Étant donné que la page d'accueil est ouverte",
+            "Quand l'utilisateur consulte les cartes affichées",
+            "Alors les 3 utilisateurs de référence sont visibles",
+        ]
+    elif "chevauche" in normalized:
+        lines = [
+            "Étant donné qu'un congé existe déjà pour l'utilisateur",
+            "Quand une nouvelle période chevauche ce congé",
+            "Alors un message d'erreur est affiché et le congé existant est conservé",
+        ]
+    elif "trop longue" in normalized:
+        lines = [
+            "Étant donné qu'une période dépasse la règle métier",
+            "Quand l'utilisateur saisit la demande de congé",
+            "Alors le bouton de validation reste désactivé",
+        ]
+    elif "jour ouvré" in normalized or "sans jour" in normalized:
+        lines = [
+            "Étant donné qu'aucun jour ouvré ne figure dans la période",
+            "Quand l'utilisateur tente de valider la demande",
+            "Alors la validation est refusée",
+        ]
+    elif "supprimer" in normalized or "congé" in normalized:
+        lines = [
+            "Étant donné qu'une fiche utilisateur est ouverte",
+            "Quand un congé valide est posé puis rechargé",
+            "Alors le congé reste visible et peut être supprimé",
+        ]
+    elif "introuvable" in normalized or "routes" in normalized:
+        lines = [
+            "Étant donné qu'une route inconnue est ouverte",
+            "Quand l'application charge cette URL",
+            "Alors une page introuvable s'affiche",
+        ]
+    else:
+        lines = [
+            f"Étant donné le scénario « {scenario.title} »",
+            f"Quand le parcours métier est exécuté",
+            f"Alors le résultat attendu est : {scenario.expected}",
+        ]
+    return "\n".join(f"- {line}" for line in lines)
+
+
+def docx_status_icon(status: str) -> str:
+    if status == "SUCCES":
+        return "🟢 SUCCES"
+    if status == "IGNORE":
+        return "🟠 IGNORE"
+    return "🔴 ECHEC"
+
+
+def docx_bullet(text: str) -> str:
+    return docx_paragraph(f"• {text}", color="334155", size=11, spacing_after=20)
+
+
+def docx_table(
+    rows: list[list[object]],
+    widths: list[int],
+    header_fill: str,
+    header_text: str,
+    body_fill: str,
+    body_text: str,
+) -> str:
+    if not rows:
+        return ""
+
+    normalized_widths = widths[:]
+    if len(normalized_widths) < len(rows[0]):
+        normalized_widths.extend([0] * (len(rows[0]) - len(normalized_widths)))
+
+    table_rows = []
+    for row_index, row in enumerate(rows):
+        is_header = row_index == 0
+        fill = header_fill if is_header else body_fill
+        color = header_text if is_header else body_text
+        table_rows.append(
+            "<w:tr>"
+            + "".join(
+                docx_table_cell(
+                    value=cell,
+                    width=normalized_widths[column_index],
+                    fill=fill,
+                    text_color=color,
+                    bold=is_header,
+                )
+                for column_index, cell in enumerate(row)
+            )
+            + "</w:tr>"
+        )
+
+    tbl_grid = "".join(
+        f'<w:gridCol w:w="{width or 2000}"/>' for width in normalized_widths[: len(rows[0])]
+    )
+
+    return (
+        '<w:tbl>'
+        '<w:tblPr><w:tblW w:w="0" w:type="auto"/>'
+        '<w:tblLayout w:type="fixed"/>'
+        '<w:tblBorders>'
+        '<w:top w:val="single" w:sz="8" w:space="0" w:color="CBD5E1"/>'
+        '<w:left w:val="single" w:sz="8" w:space="0" w:color="CBD5E1"/>'
+        '<w:bottom w:val="single" w:sz="8" w:space="0" w:color="CBD5E1"/>'
+        '<w:right w:val="single" w:sz="8" w:space="0" w:color="CBD5E1"/>'
+        '<w:insideH w:val="single" w:sz="8" w:space="0" w:color="CBD5E1"/>'
+        '<w:insideV w:val="single" w:sz="8" w:space="0" w:color="CBD5E1"/>'
+        '</w:tblBorders></w:tblPr>'
+        f'<w:tblGrid>{tbl_grid}</w:tblGrid>'
+        + "".join(table_rows)
+        + '</w:tbl>'
+    )
+
+
+def docx_table_cell(value: object, width: int, fill: str, text_color: str, bold: bool) -> str:
+    width_xml = f'<w:tcW w:w="{width or 2000}" w:type="dxa"/>'
+    if isinstance(value, list):
+        lines = [str(item) for item in value]
+    else:
+        lines = str(value).split("\n")
+
+    paragraphs = "".join(
+        docx_paragraph(
+            line,
+            color=text_color,
+            bold=bold,
+            size=20,
+            spacing_after=0,
+            spacing_before=0,
+            font="Calibri",
+        )
+        for line in lines
+    )
+    return (
+        '<w:tc>'
+        f'<w:tcPr>{width_xml}<w:shd w:fill="{fill}"/><w:vAlign w:val="center"/></w:tcPr>'
+        f"{paragraphs}"
+        '</w:tc>'
+    )
+
+
+def docx_paragraph(
+    text: str,
+    *,
+    align: str | None = None,
+    bold: bool = False,
+    italic: bool = False,
+    color: str | None = None,
+    size: int | None = None,
+    font: str | None = None,
+    shading: str | None = None,
+    spacing_before: int | None = None,
+    spacing_after: int | None = None,
+) -> str:
+    paragraph_props = []
+    if align:
+        paragraph_props.append(f'<w:jc w:val="{align}"/>')
+    if spacing_before is not None or spacing_after is not None:
+        before = 0 if spacing_before is None else spacing_before
+        after = 0 if spacing_after is None else spacing_after
+        paragraph_props.append(f'<w:spacing w:before="{before}" w:after="{after}"/>')
+    if shading:
+        paragraph_props.append(f'<w:shd w:fill="{shading}"/>')
+
+    run_props = []
+    if bold:
+        run_props.append("<w:b/>")
+    if italic:
+        run_props.append("<w:i/>")
+    if color:
+        run_props.append(f'<w:color w:val="{color}"/>')
+    if size:
+        run_props.append(f'<w:sz w:val="{size}"/>')
+        run_props.append(f'<w:szCs w:val="{size}"/>')
+    if font:
+        run_props.append(
+            f'<w:rFonts w:ascii="{font}" w:hAnsi="{font}" w:cs="{font}" w:eastAsia="{font}"/>'
+        )
+
+    return (
+        '<w:p>'
+        + (f'<w:pPr>{"".join(paragraph_props)}</w:pPr>' if paragraph_props else "")
+        + f'<w:r><w:rPr>{"".join(run_props)}</w:rPr><w:t xml:space="preserve">{xml_escape(text)}</w:t></w:r>'
+        '</w:p>'
+    )
+
+
+def docx_page_break() -> str:
+    return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+
+
+def docx_section_properties() -> str:
+    return (
+        '<w:sectPr>'
+        '<w:pgSz w:w="11906" w:h="16838"/>'
+        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>'
+        '<w:cols w:space="708"/>'
+        '<w:docGrid w:linePitch="360"/>'
+        '</w:sectPr>'
+    )
+
+
+def docx_content_types_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+        '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
+        '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+        '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
+        '</Types>'
+    )
+
+
+def docx_root_rels_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+        '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>'
+        '</Relationships>'
+    )
+
+
+def docx_document_rels_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>'
+        '</Relationships>'
+    )
+
+
+def docx_core_xml(metadata: ReportMetadata) -> str:
+    now = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+        'xmlns:dcterms="http://purl.org/dc/terms/" '
+        'xmlns:dcmitype="http://purl.org/dc/dcmitype/" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+        f'<dc:title>PV de recette - {xml_escape(metadata.project_name)}</dc:title>'
+        f'<dc:subject>Recette métier</dc:subject>'
+        f'<dc:creator>Copilot</dc:creator>'
+        f'<cp:lastModifiedBy>Copilot</cp:lastModifiedBy>'
+        f'<dcterms:created xsi:type="dcterms:W3CDTF">{now}</dcterms:created>'
+        f'<dcterms:modified xsi:type="dcterms:W3CDTF">{now}</dcterms:modified>'
+        '</cp:coreProperties>'
+    )
+
+
+def docx_app_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" '
+        'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+        '<Application>Copilot</Application>'
+        '</Properties>'
+    )
+
+
+def docx_settings_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:zoom w:percent="100"/>'
+        '<w:compat/>'
+        '</w:settings>'
+    )
+
+
+def docx_styles_xml() -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:docDefaults>'
+        '<w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:rPrDefault>'
+        '<w:pPrDefault><w:pPr><w:spacing w:after="120"/></w:pPr></w:pPrDefault>'
+        '</w:docDefaults>'
+        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+        '<w:name w:val="Normal"/>'
+        '<w:qFormat/>'
+        '</w:style>'
+        '</w:styles>'
+    )
 
 
 def worksheet_xml(headers: list[str], rows: list[list[object]], widths: list[int]) -> str:
