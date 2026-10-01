@@ -6,6 +6,7 @@ import csv
 import datetime as dt
 import html
 import json
+import math
 import os
 import re
 import shutil
@@ -488,7 +489,6 @@ def pie_slice_path(
 ) -> str:
     """Construit le chemin SVG (`d`) d'une part de camembert allant de
     `start_fraction` à `end_fraction` (valeurs comprises entre 0 et 1)."""
-    import math
 
     def point(fraction: float) -> tuple[float, float]:
         angle = (fraction * 360.0 - 90.0) * math.pi / 180.0
@@ -515,18 +515,30 @@ def build_pie_chart_svg(success: int, failure: int, ignored: int) -> str:
         ("Échecs", failure, "#cf222e"),
         ("Ignorés", ignored, "#9a6700"),
     ]
+    non_zero_segments = [segment for segment in segments if segment[1] > 0]
 
-    cursor = 0.0
-    slices = []
-    for label, count, color in segments:
-        if count <= 0:
-            continue
-        fraction = count / total
-        slices.append(
-            f'<path d="{pie_slice_path(60, 60, 58, cursor, cursor + fraction)}" '
-            f'fill="{color}"><title>{html.escape(label)} : {count} ({fraction * 100:.0f}%)</title></path>'
-        )
-        cursor += fraction
+    if len(non_zero_segments) == 1:
+        # Un seul statut représente 100 % des résultats : les points de
+        # départ et de fin d'une part « plein cercle » seraient identiques
+        # (angle de -90° dans les deux cas), ce qui produirait un arc
+        # dégénéré invisible. On dessine donc directement un cercle plein.
+        label, count, color = non_zero_segments[0]
+        slices = [
+            f'<circle cx="60" cy="60" r="58" fill="{color}">'
+            f"<title>{html.escape(label)} : {count} (100%)</title></circle>"
+        ]
+    else:
+        cursor = 0.0
+        slices = []
+        for label, count, color in segments:
+            if count <= 0:
+                continue
+            fraction = count / total
+            slices.append(
+                f'<path d="{pie_slice_path(60, 60, 58, cursor, cursor + fraction)}" '
+                f'fill="{color}"><title>{html.escape(label)} : {count} ({fraction * 100:.0f}%)</title></path>'
+            )
+            cursor += fraction
 
     return (
         '<svg viewBox="0 0 120 120" class="pie-chart" role="img" '

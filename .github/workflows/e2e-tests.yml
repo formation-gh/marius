@@ -54,6 +54,8 @@ jobs:
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add history/history.json
             git commit -m "chore: mise à jour de l'historique des tests E2E [skip ci]"
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase "origin/${GITHUB_REF_NAME}"
             git push
           else
             echo "Historique inchangé, rien à committer."
