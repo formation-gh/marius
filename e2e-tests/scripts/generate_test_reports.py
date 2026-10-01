@@ -792,7 +792,7 @@ def write_html_index(
     </section>
   </main>
 
-  <script id="app-data" type="application/json">{json.dumps(app_data, ensure_ascii=False)}</script>
+  <script id="app-data" type="application/json">{json.dumps(app_data, ensure_ascii=False).replace("</", "<\\/")}</script>
   <script>
 {APP_JS}
   </script>
