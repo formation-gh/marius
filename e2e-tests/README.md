@@ -43,3 +43,12 @@ possible de forcer l'emplacement du driver via la variable d'environnement
 cd e2e-tests
 mvn test
 ```
+
+## Rapports générés par la GitHub Action
+
+Le workflow produit aussi, dans les artefacts d'exécution :
+
+- un fichier CSV des étapes de test exécutées ;
+- un fichier Excel récapitulatif des cas de test et de leurs étapes ;
+- un PV de recette de test au format PDF ;
+- les captures d'écran des scénarios E2E.
