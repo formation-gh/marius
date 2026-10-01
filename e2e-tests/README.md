@@ -69,9 +69,18 @@ sans avoir à télécharger de fichier ZIP :
 
 - un résumé des scénarios (statuts, étapes réussies, durées) affiché
   directement dans le **Job Summary** de l'exécution GitHub Actions ;
-- une page HTML (`index.html`) publiée sur **GitHub Pages** (lien ajouté dans
-  le Job Summary lors des push sur `main`), affichant le détail des scénarios
-  ainsi que les captures d'écran intégrées, avec des liens vers les livrables ;
+- un site HTML (`index.html`) publié sur **GitHub Pages** (lien ajouté dans
+  le Job Summary lors des push sur `main`), qui permet de **piloter la
+  consultation des tests** :
+  - un **tableau de bord** avec un camembert (succès / échecs / ignorés), sa
+    légende, et un **historique** des dernières exécutions sous forme de
+    graphique en barres ;
+  - une page **Scénarios** listant tous les scénarios exécutés, filtrable par
+    statut (tous / succès / échecs / partiels) ;
+  - pour chaque scénario : l'objectif, le résultat attendu/obtenu, le
+    **Gherkin**, le détail des **étapes** exécutées et les **captures
+    d'écran**, avec des boutons « Précédent » / « Suivant » pour naviguer
+    d'un scénario à l'autre ;
 - un fichier CSV des étapes de test exécutées ;
 - un fichier Excel récapitulatif des cas de test et de leurs étapes ;
 - un PV de recette métier au format Word (.docx) et PDF, directement réutilisable dans un document ou un mail de validation ;
@@ -80,3 +89,7 @@ sans avoir à télécharger de fichier ZIP :
 Ces fichiers restent également disponibles en archive ZIP (artefact
 `e2e-test-reports`) en sauvegarde, mais ce n'est plus nécessaire pour
 consulter les résultats.
+
+L'historique des exécutions est conservé dans `e2e-tests/history/history.json`
+(mis à jour et commité automatiquement par le workflow après chaque exécution
+sur `main`) afin d'afficher une tendance sur le tableau de bord du site.

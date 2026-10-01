@@ -5,6 +5,8 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import html
+import json
+import math
 import os
 import re
 import shutil
@@ -29,6 +31,14 @@ SCREENSHOTS_REPORT_DIR = REPORT_DIR / "screenshots"
 DEFAULT_PROJECT_NAME = "formation-gh-api"
 DEFAULT_TARGET_URL = "https://aouzgaga.github.io/formation-gh-api/"
 DEFAULT_ENVIRONMENT = "Application publiée sur GitHub Pages"
+
+# Historique des exécutions : conservé dans le dépôt (hors du dossier `target`,
+# qui est ignoré par Git) afin de pouvoir afficher une tendance sur plusieurs
+# exécutions successives du pilote de tests.
+HISTORY_DIR = ROOT / "history"
+HISTORY_PATH = HISTORY_DIR / "history.json"
+HISTORY_REPORT_PATH = REPORT_DIR / "history.json"
+HISTORY_MAX_ENTRIES = 50
 
 
 @dataclass
@@ -93,7 +103,10 @@ def main() -> None:
     write_docx(DOCX_PATH, metadata, summaries, scenarios, detail_rows)
     write_pdf(PDF_PATH, metadata, summaries, scenarios)
     screenshots_by_method = copy_screenshots()
-    write_html_index(HTML_INDEX_PATH, metadata, summaries, scenarios, screenshots_by_method)
+    history = update_history(metadata, summaries)
+    write_html_index(
+        HTML_INDEX_PATH, metadata, summaries, scenarios, screenshots_by_method, history, detail_rows
+    )
     write_summary_markdown(SUMMARY_MD_PATH, metadata, summaries)
 
     print(f"Excel généré : {XLSX_PATH}")
@@ -420,8 +433,154 @@ def nettoyer_nom(name: str) -> str:
     return cleaned.strip("-")
 
 
+def load_history() -> list[dict[str, object]]:
+    if not HISTORY_PATH.exists():
+        return []
+    try:
+        data = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def update_history(
+    metadata: ReportMetadata,
+    summaries: list[TestCaseSummary],
+) -> list[dict[str, object]]:
+    """Ajoute l'exécution courante à l'historique persisté dans le dépôt
+    (`history/history.json`) et renvoie l'historique complet (borné aux
+    dernières exécutions) afin de l'afficher sur le tableau de bord."""
+    total = len(summaries)
+    success = sum(1 for summary in summaries if summary.status == "SUCCES")
+    failure = sum(1 for summary in summaries if summary.status == "ECHEC")
+    ignored = total - success - failure
+
+    entry = {
+        "date": metadata.generation_date,
+        "execution_reference": metadata.execution_reference,
+        "version_label": metadata.version_label,
+        "total": total,
+        "success": success,
+        "failure": failure,
+        "ignored": ignored,
+    }
+
+    history = load_history()
+    history.append(entry)
+    history = history[-HISTORY_MAX_ENTRIES:]
+
+    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    history_json = json.dumps(history, ensure_ascii=False, indent=2)
+    HISTORY_PATH.write_text(history_json, encoding="utf-8")
+    HISTORY_REPORT_PATH.write_text(history_json, encoding="utf-8")
+
+    return history
+
+
 def status_badge_color(status: str) -> str:
     return {"OK": "#1a7f37", "Partiel": "#9a6700", "KO": "#cf222e"}.get(status, "#57606a")
+
+
+def pie_slice_path(
+    cx: float,
+    cy: float,
+    r: float,
+    start_fraction: float,
+    end_fraction: float,
+) -> str:
+    """Construit le chemin SVG (`d`) d'une part de camembert allant de
+    `start_fraction` à `end_fraction` (valeurs comprises entre 0 et 1)."""
+
+    def point(fraction: float) -> tuple[float, float]:
+        angle = (fraction * 360.0 - 90.0) * math.pi / 180.0
+        return (cx + r * math.cos(angle), cy + r * math.sin(angle))
+
+    start_x, start_y = point(start_fraction)
+    end_x, end_y = point(end_fraction)
+    large_arc = 1 if (end_fraction - start_fraction) > 0.5 else 0
+    return (
+        f"M {cx} {cy} L {start_x:.3f} {start_y:.3f} "
+        f"A {r} {r} 0 {large_arc} 1 {end_x:.3f} {end_y:.3f} Z"
+    )
+
+
+def build_pie_chart_svg(success: int, failure: int, ignored: int) -> str:
+    """Génère un camembert SVG autonome (sans dépendance JS externe) résumant
+    les statuts d'exécution, avec une part par statut."""
+    total = success + failure + ignored
+    if total == 0:
+        return '<p class="empty">Aucune exécution à représenter.</p>'
+
+    segments = [
+        ("Succès", success, "#1a7f37"),
+        ("Échecs", failure, "#cf222e"),
+        ("Ignorés", ignored, "#9a6700"),
+    ]
+    non_zero_segments = [segment for segment in segments if segment[1] > 0]
+
+    if len(non_zero_segments) == 1:
+        # Un seul statut représente 100 % des résultats : les points de
+        # départ et de fin d'une part « plein cercle » seraient identiques
+        # (angle de -90° dans les deux cas), ce qui produirait un arc
+        # dégénéré invisible. On dessine donc directement un cercle plein.
+        label, count, color = non_zero_segments[0]
+        slices = [
+            f'<circle cx="60" cy="60" r="58" fill="{color}">'
+            f"<title>{html.escape(label)} : {count} (100%)</title></circle>"
+        ]
+    else:
+        cursor = 0.0
+        slices = []
+        for label, count, color in segments:
+            if count <= 0:
+                continue
+            fraction = count / total
+            slices.append(
+                f'<path d="{pie_slice_path(60, 60, 58, cursor, cursor + fraction)}" '
+                f'fill="{color}"><title>{html.escape(label)} : {count} ({fraction * 100:.0f}%)</title></path>'
+            )
+            cursor += fraction
+
+    return (
+        '<svg viewBox="0 0 120 120" class="pie-chart" role="img" '
+        f'aria-label="Répartition des résultats : {success} succès, {failure} échecs, {ignored} ignorés">'
+        + "".join(slices)
+        + "</svg>"
+    )
+
+
+def build_history_bars_html(history: list[dict[str, object]]) -> str:
+    """Génère un mini graphique en barres (empilées succès/échecs/ignorés)
+    représentant l'historique des dernières exécutions."""
+    if not history:
+        return '<p class="empty">Aucun historique disponible pour le moment.</p>'
+
+    bars = []
+    for entry in history:
+        total = int(entry.get("total", 0) or 0)
+        success = int(entry.get("success", 0) or 0)
+        failure = int(entry.get("failure", 0) or 0)
+        ignored = int(entry.get("ignored", 0) or 0)
+        if total <= 0:
+            total = max(success + failure + ignored, 1)
+        success_pct = success / total * 100
+        failure_pct = failure / total * 100
+        ignored_pct = ignored / total * 100
+        label = html.escape(str(entry.get("execution_reference") or entry.get("date") or ""))
+        date = html.escape(str(entry.get("date", "")))
+        bars.append(
+            f"""
+            <div class="history-bar" title="{label} — {date} — {success}/{total} succès">
+              <div class="history-bar-track">
+                <div class="history-bar-segment" style="height:{success_pct:.1f}%;background:#1a7f37"></div>
+                <div class="history-bar-segment" style="height:{failure_pct:.1f}%;background:#cf222e"></div>
+                <div class="history-bar-segment" style="height:{ignored_pct:.1f}%;background:#9a6700"></div>
+              </div>
+              <span class="history-bar-label">{date or label}</span>
+            </div>
+            """
+        )
+    return f'<div class="history-bars">{"".join(bars)}</div>'
 
 
 def write_html_index(
@@ -430,90 +589,372 @@ def write_html_index(
     summaries: list[TestCaseSummary],
     scenarios: list[ScenarioReport],
     screenshots_by_method: dict[str, list[Path]],
+    history: list[dict[str, object]],
+    step_rows: list[StepRow],
 ) -> None:
-    """Génère une page HTML autonome qui permet de consulter directement sur
-    GitHub Pages le résultat des tests E2E (statuts, scénarios, captures
-    d'écran et liens vers les livrables), sans avoir à télécharger d'archive
-    ZIP."""
+    """Génère un site HTML autonome (une seule page, sans dépendance externe)
+    permettant de piloter la consultation des tests E2E : tableau de bord
+    (camembert + légende + historique des exécutions), liste des scénarios
+    avec navigation précédent/suivant, étapes détaillées, Gherkin et captures
+    d'écran, directement publiable sur GitHub Pages."""
     method_by_case = {summary.case: summary.method for summary in summaries}
-
-    rows_html = []
-    for scenario in scenarios:
-        method = method_by_case.get(scenario.title, "")
-        cleaned_method = nettoyer_nom(method)
-        screenshots = screenshots_by_method.get(cleaned_method, [])
-        thumbnails = "".join(
-            f'<a href="{html.escape(str(image))}" target="_blank">'
-            f'<img src="{html.escape(str(image))}" alt="{html.escape(image.name)}" '
-            f'class="thumb" loading="lazy"></a>'
-            for image in screenshots
-        ) or "<em>Aucune capture d'écran</em>"
-
-        rows_html.append(
-            f"""
-            <section class="scenario">
-              <h3><span class="badge" style="background:{status_badge_color(scenario.status)}">{html.escape(scenario.status)}</span>
-                  {html.escape(scenario.title)}</h3>
-              <p><strong>Objectif :</strong> {html.escape(scenario.objective)}</p>
-              <p><strong>Résultat attendu :</strong> {html.escape(scenario.expected)}</p>
-              <p><strong>Résultat obtenu :</strong> {html.escape(scenario.obtained)}</p>
-              <p><strong>Détails :</strong> {html.escape(scenario.details)}</p>
-              <div class="screenshots">{thumbnails}</div>
-            </section>
-            """
-        )
+    steps_by_method: dict[str, list[StepRow]] = {}
+    for step in step_rows:
+        steps_by_method.setdefault(step.method, []).append(step)
 
     total = len(summaries)
     success = sum(1 for summary in summaries if summary.status == "SUCCES")
     failure = sum(1 for summary in summaries if summary.status == "ECHEC")
     ignored = total - success - failure
 
+    scenario_payload = []
+    for index, scenario in enumerate(scenarios):
+        method = method_by_case.get(scenario.title, "")
+        cleaned_method = nettoyer_nom(method)
+        screenshots = screenshots_by_method.get(cleaned_method, [])
+        scenario_payload.append(
+            {
+                "index": index,
+                "title": scenario.title,
+                "status": scenario.status,
+                "objective": scenario.objective,
+                "expected": scenario.expected,
+                "obtained": scenario.obtained,
+                "details": scenario.details,
+                "gherkin": build_gherkin_text(scenario),
+                "steps": [
+                    {
+                        "step": step.step,
+                        "status": step.status,
+                        "detail": step.detail,
+                        "duration_ms": step.duration_ms,
+                    }
+                    for step in steps_by_method.get(method, [])
+                ],
+                "screenshots": [str(image) for image in screenshots],
+            }
+        )
+
+    app_data = {
+        "metadata": {
+            "project_name": metadata.project_name,
+            "lot_name": metadata.lot_name,
+            "version_label": metadata.version_label,
+            "environment": metadata.environment,
+            "target_url": metadata.target_url,
+            "execution_reference": metadata.execution_reference,
+            "generation_date": metadata.generation_date,
+        },
+        "summary": {"total": total, "success": success, "failure": failure, "ignored": ignored},
+        "scenarios": scenario_payload,
+        "history": history,
+    }
+
+    pie_chart_svg = build_pie_chart_svg(success, failure, ignored)
+    history_bars_html = build_history_bars_html(history)
+
     content = f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>PV de recette — {html.escape(metadata.project_name)}</title>
+<title>Pilote de tests E2E — {html.escape(metadata.project_name)}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body {{ font-family: -apple-system, Segoe UI, Arial, sans-serif; margin: 2rem; color: #1f2328; }}
-  h1 {{ margin-bottom: 0; }}
-  .meta {{ color: #57606a; margin-top: 0.25rem; }}
-  .summary {{ display: flex; gap: 1rem; margin: 1.5rem 0; }}
-  .summary div {{ padding: 0.75rem 1rem; border-radius: 6px; background: #f6f8fa; }}
-  .badge {{ color: #fff; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.85rem; margin-right: 0.5rem; }}
-  .scenario {{ border: 1px solid #d0d7de; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }}
-  .screenshots {{ display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }}
-  .thumb {{ height: 140px; border: 1px solid #d0d7de; border-radius: 4px; }}
-  a {{ color: #0969da; }}
+  :root {{
+    --ok: #1a7f37; --ko: #cf222e; --partiel: #9a6700; --muted: #57606a;
+    --border: #d0d7de; --bg-soft: #f6f8fa;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, "Segoe UI", Arial, sans-serif; margin: 0; color: #1f2328;
+    background: #ffffff;
+  }}
+  header.top {{ padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); }}
+  header.top h1 {{ margin: 0 0 0.25rem 0; font-size: 1.4rem; }}
+  .meta {{ color: var(--muted); font-size: 0.9rem; }}
+  nav.tabs {{ display: flex; gap: 0.5rem; padding: 0 1.5rem; border-bottom: 1px solid var(--border); background: var(--bg-soft); }}
+  nav.tabs button {{
+    border: none; background: transparent; padding: 0.75rem 1rem; cursor: pointer;
+    font-size: 0.95rem; color: var(--muted); border-bottom: 3px solid transparent;
+  }}
+  nav.tabs button.active {{ color: #1f2328; border-bottom-color: #0969da; font-weight: 600; }}
+  main {{ padding: 1.5rem; }}
+  .view {{ display: none; }}
+  .view.active {{ display: block; }}
+  .dashboard-grid {{ display: flex; flex-wrap: wrap; gap: 2rem; align-items: flex-start; }}
+  .card {{ border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; background: #fff; }}
+  .pie-card {{ display: flex; gap: 1.5rem; align-items: center; }}
+  .pie-chart {{ width: 150px; height: 150px; flex-shrink: 0; }}
+  .legend {{ list-style: none; margin: 0; padding: 0; }}
+  .legend li {{ display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; font-size: 0.95rem; }}
+  .legend .swatch {{ width: 14px; height: 14px; border-radius: 3px; display: inline-block; }}
+  .history-bars {{ display: flex; gap: 0.6rem; align-items: flex-end; height: 160px; overflow-x: auto; padding-top: 0.5rem; }}
+  .history-bar {{ display: flex; flex-direction: column; align-items: center; min-width: 28px; }}
+  .history-bar-track {{
+    width: 20px; height: 120px; background: #eaeef2; border-radius: 3px;
+    display: flex; flex-direction: column-reverse; overflow: hidden;
+  }}
+  .history-bar-label {{ font-size: 0.65rem; color: var(--muted); margin-top: 0.3rem; writing-mode: vertical-rl; }}
+  .empty {{ color: var(--muted); font-style: italic; }}
   .links a {{ margin-right: 1rem; }}
+  .badge {{ color: #fff; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.8rem; white-space: nowrap; }}
+  .scenarios-layout {{ display: flex; gap: 1.5rem; align-items: flex-start; }}
+  .scenario-list {{ list-style: none; margin: 0; padding: 0; width: 320px; flex-shrink: 0; }}
+  .scenario-list li {{
+    border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem 0.75rem;
+    margin-bottom: 0.5rem; cursor: pointer; display: flex; justify-content: space-between;
+    align-items: center; gap: 0.5rem;
+  }}
+  .scenario-list li:hover {{ background: var(--bg-soft); }}
+  .scenario-list li.selected {{ border-color: #0969da; background: #ddf4ff; }}
+  .scenario-list li span.title {{ font-size: 0.9rem; }}
+  .filters {{ display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }}
+  .filters button {{
+    border: 1px solid var(--border); background: #fff; border-radius: 999px; padding: 0.3rem 0.8rem;
+    cursor: pointer; font-size: 0.85rem;
+  }}
+  .filters button.active {{ background: #0969da; color: #fff; border-color: #0969da; }}
+  .scenario-detail {{ flex: 1; min-width: 0; }}
+  .scenario-detail h2 {{ margin-top: 0; }}
+  .nav-buttons {{ display: flex; justify-content: space-between; margin-bottom: 1rem; }}
+  .nav-buttons button {{
+    border: 1px solid var(--border); background: #fff; border-radius: 6px; padding: 0.5rem 1rem; cursor: pointer;
+  }}
+  .nav-buttons button:disabled {{ opacity: 0.4; cursor: not-allowed; }}
+  table.steps {{ width: 100%; border-collapse: collapse; margin-top: 0.5rem; }}
+  table.steps th, table.steps td {{ border: 1px solid var(--border); padding: 0.4rem 0.6rem; font-size: 0.9rem; text-align: left; }}
+  table.steps th {{ background: var(--bg-soft); }}
+  pre.gherkin {{ background: #0d1117; color: #c9d1d9; padding: 1rem; border-radius: 6px; overflow-x: auto; }}
+  .screenshots {{ display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }}
+  .thumb {{ height: 140px; border: 1px solid var(--border); border-radius: 4px; }}
+  a {{ color: #0969da; }}
+  @media (max-width: 800px) {{
+    .scenarios-layout {{ flex-direction: column; }}
+    .scenario-list {{ width: 100%; }}
+  }}
 </style>
 </head>
 <body>
-  <h1>PV de recette — {html.escape(metadata.project_name)}</h1>
-  <p class="meta">
-    Lot : {html.escape(metadata.lot_name)} — Version : {html.escape(metadata.version_label)} —
-    Environnement : {html.escape(metadata.environment)}<br>
-    Exécution : {html.escape(metadata.execution_reference)} — Généré le {html.escape(metadata.generation_date)}<br>
-    Application testée : <a href="{html.escape(metadata.target_url)}">{html.escape(metadata.target_url)}</a>
-  </p>
-  <div class="summary">
-    <div>Total : <strong>{total}</strong></div>
-    <div>Succès : <strong>{success}</strong></div>
-    <div>Échecs : <strong>{failure}</strong></div>
-    <div>Ignorés : <strong>{ignored}</strong></div>
-  </div>
-  <p class="links">
-    <a href="e2e-test-steps.csv">CSV détaillé</a>
-    <a href="pv-recette-tests.xlsx">Excel</a>
-    <a href="pv-recette-tests.docx">Word (PV de recette)</a>
-    <a href="pv-recette-tests.pdf">PDF (PV de recette)</a>
-  </p>
-  <h2>Scénarios</h2>
-  {"".join(rows_html) or "<p>Aucun scénario exécuté.</p>"}
+  <header class="top">
+    <h1>Pilote de tests E2E — {html.escape(metadata.project_name)}</h1>
+    <p class="meta">
+      Lot : {html.escape(metadata.lot_name)} — Version : {html.escape(metadata.version_label)} —
+      Environnement : {html.escape(metadata.environment)}<br>
+      Exécution : {html.escape(metadata.execution_reference)} — Généré le {html.escape(metadata.generation_date)}<br>
+      Application testée : <a href="{html.escape(metadata.target_url)}">{html.escape(metadata.target_url)}</a>
+    </p>
+    <p class="links">
+      <a href="e2e-test-steps.csv">CSV détaillé</a>
+      <a href="pv-recette-tests.xlsx">Excel</a>
+      <a href="pv-recette-tests.docx">Word (PV de recette)</a>
+      <a href="pv-recette-tests.pdf">PDF (PV de recette)</a>
+    </p>
+  </header>
+
+  <nav class="tabs">
+    <button type="button" data-view="dashboard" class="active">Tableau de bord</button>
+    <button type="button" data-view="scenarios">Scénarios</button>
+  </nav>
+
+  <main>
+    <section id="view-dashboard" class="view active">
+      <div class="dashboard-grid">
+        <div class="card pie-card">
+          {pie_chart_svg}
+          <ul class="legend">
+            <li><span class="swatch" style="background:#1a7f37"></span> Succès : <strong>{success}</strong></li>
+            <li><span class="swatch" style="background:#cf222e"></span> Échecs : <strong>{failure}</strong></li>
+            <li><span class="swatch" style="background:#9a6700"></span> Ignorés : <strong>{ignored}</strong></li>
+            <li>Total : <strong>{total}</strong></li>
+          </ul>
+        </div>
+        <div class="card" style="flex:1; min-width: 280px;">
+          <h3 style="margin-top:0;">Historique des exécutions</h3>
+          {history_bars_html}
+        </div>
+      </div>
+    </section>
+
+    <section id="view-scenarios" class="view">
+      <div class="scenarios-layout">
+        <div>
+          <div class="filters" id="filters">
+            <button type="button" data-filter="all" class="active">Tous</button>
+            <button type="button" data-filter="OK">Succès</button>
+            <button type="button" data-filter="KO">Échecs</button>
+            <button type="button" data-filter="Partiel">Partiels</button>
+          </div>
+          <ul class="scenario-list" id="scenario-list"></ul>
+        </div>
+        <div class="scenario-detail" id="scenario-detail">
+          <p class="empty">Sélectionnez un scénario dans la liste.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script id="app-data" type="application/json">{json.dumps(app_data, ensure_ascii=False).replace("</", "<\\/")}</script>
+  <script>
+{APP_JS}
+  </script>
 </body>
 </html>
 """
     path.write_text(content, encoding="utf-8")
+
+
+APP_JS = """
+(function () {
+  var data = JSON.parse(document.getElementById('app-data').textContent);
+  var scenarios = data.scenarios;
+  var currentFilter = 'all';
+  var selectedIndex = scenarios.length ? 0 : -1;
+
+  var statusColors = { OK: '#1a7f37', KO: '#cf222e', Partiel: '#9a6700' };
+
+  function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text == null ? '' : String(text);
+    return div.innerHTML;
+  }
+
+  function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function filteredScenarios() {
+    if (currentFilter === 'all') { return scenarios; }
+    return scenarios.filter(function (s) { return s.status === currentFilter; });
+  }
+
+  function renderList() {
+    var list = document.getElementById('scenario-list');
+    var items = filteredScenarios();
+    list.innerHTML = items.map(function (s) {
+      var selected = s.index === selectedIndex ? ' selected' : '';
+      var color = statusColors[s.status] || '#57606a';
+      return '<li class="' + selected.trim() + '" data-index="' + s.index + '">' +
+        '<span class="title">' + escapeHtml(s.title) + '</span>' +
+        '<span class="badge" style="background:' + color + '">' + escapeHtml(s.status) + '</span>' +
+        '</li>';
+    }).join('') || '<li class="empty">Aucun scénario pour ce filtre.</li>';
+
+    Array.prototype.forEach.call(list.querySelectorAll('li[data-index]'), function (el) {
+      el.addEventListener('click', function () {
+        selectScenario(parseInt(el.getAttribute('data-index'), 10));
+      });
+    });
+  }
+
+  function stepsTable(steps) {
+    if (!steps || !steps.length) {
+      return '<p class="empty">Aucune étape détaillée enregistrée.</p>';
+    }
+    var rows = steps.map(function (step) {
+      var color = step.status === 'SUCCES' ? '#1a7f37' : '#cf222e';
+      return '<tr>' +
+        '<td>' + escapeHtml(step.step) + '</td>' +
+        '<td><span class="badge" style="background:' + color + '">' + escapeHtml(step.status) + '</span></td>' +
+        '<td>' + escapeHtml(step.detail) + '</td>' +
+        '<td>' + escapeHtml(step.duration_ms) + ' ms</td>' +
+        '</tr>';
+    }).join('');
+    return '<table class="steps"><thead><tr><th>Étape</th><th>Statut</th><th>Détail</th><th>Durée</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table>';
+  }
+
+  function screenshotsHtml(screenshots, scenarioTitle) {
+    if (!screenshots || !screenshots.length) {
+      return '<p class="empty">Aucune capture d\\'écran.</p>';
+    }
+    return '<div class="screenshots">' + screenshots.map(function (src, position) {
+      var safeSrc = escapeAttr(src);
+      var fileName = String(src).split('/').pop();
+      var altText = escapeAttr(scenarioTitle + ' — capture ' + (position + 1) + ' (' + fileName + ')');
+      return '<a href="' + safeSrc + '" target="_blank"><img class="thumb" loading="lazy" src="' + safeSrc + '" alt="' + altText + '"></a>';
+    }).join('') + '</div>';
+  }
+
+  function selectScenario(index) {
+    selectedIndex = index;
+    var scenario = scenarios[index];
+    var detail = document.getElementById('scenario-detail');
+    if (!scenario) {
+      detail.innerHTML = '<p class="empty">Sélectionnez un scénario dans la liste.</p>';
+      renderList();
+      return;
+    }
+    var items = filteredScenarios();
+    var posInFiltered = items.findIndex(function (s) { return s.index === index; });
+    var prev = posInFiltered > 0 ? items[posInFiltered - 1] : null;
+    var next = posInFiltered >= 0 && posInFiltered < items.length - 1 ? items[posInFiltered + 1] : null;
+
+    var color = statusColors[scenario.status] || '#57606a';
+    detail.innerHTML =
+      '<div class="nav-buttons">' +
+        '<button type="button" id="btn-prev" ' + (prev ? '' : 'disabled') + '>&laquo; Précédent</button>' +
+        '<button type="button" id="btn-next" ' + (next ? '' : 'disabled') + '>Suivant &raquo;</button>' +
+      '</div>' +
+      '<h2><span class="badge" style="background:' + color + '">' + escapeHtml(scenario.status) + '</span> ' +
+        escapeHtml(scenario.title) + '</h2>' +
+      '<p><strong>Objectif :</strong> ' + escapeHtml(scenario.objective) + '</p>' +
+      '<p><strong>Résultat attendu :</strong> ' + escapeHtml(scenario.expected) + '</p>' +
+      '<p><strong>Résultat obtenu :</strong> ' + escapeHtml(scenario.obtained) + '</p>' +
+      '<p><strong>Détails :</strong> ' + escapeHtml(scenario.details) + '</p>' +
+      '<h3>Gherkin</h3><pre class="gherkin">' + escapeHtml(scenario.gherkin) + '</pre>' +
+      '<h3>Étapes</h3>' + stepsTable(scenario.steps) +
+      '<h3>Captures d\\'écran</h3>' + screenshotsHtml(scenario.screenshots, scenario.title);
+
+    var prevBtn = document.getElementById('btn-prev');
+    var nextBtn = document.getElementById('btn-next');
+    if (prevBtn && prev) { prevBtn.addEventListener('click', function () { selectScenario(prev.index); }); }
+    if (nextBtn && next) { nextBtn.addEventListener('click', function () { selectScenario(next.index); }); }
+
+    renderList();
+    window.location.hash = 'scenario-' + index;
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('#filters button'), function (btn) {
+    btn.addEventListener('click', function () {
+      Array.prototype.forEach.call(document.querySelectorAll('#filters button'), function (b) {
+        b.classList.remove('active');
+      });
+      btn.classList.add('active');
+      currentFilter = btn.getAttribute('data-filter');
+      var items = filteredScenarios();
+      if (items.length && !items.some(function (s) { return s.index === selectedIndex; })) {
+        selectScenario(items[0].index);
+      } else {
+        renderList();
+      }
+    });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll('nav.tabs button'), function (btn) {
+    btn.addEventListener('click', function () {
+      Array.prototype.forEach.call(document.querySelectorAll('nav.tabs button'), function (b) {
+        b.classList.remove('active');
+      });
+      Array.prototype.forEach.call(document.querySelectorAll('.view'), function (v) {
+        v.classList.remove('active');
+      });
+      btn.classList.add('active');
+      document.getElementById('view-' + btn.getAttribute('data-view')).classList.add('active');
+    });
+  });
+
+  renderList();
+  if (scenarios.length) {
+    var hashMatch = /^#scenario-(\\d+)$/.exec(window.location.hash);
+    var initialIndex = hashMatch ? parseInt(hashMatch[1], 10) : 0;
+    if (!scenarios[initialIndex]) { initialIndex = 0; }
+    selectScenario(initialIndex);
+    if (hashMatch) {
+      document.querySelector('nav.tabs button[data-view="scenarios"]').click();
+    }
+  }
+})();
+"""
 
 
 def write_summary_markdown(
