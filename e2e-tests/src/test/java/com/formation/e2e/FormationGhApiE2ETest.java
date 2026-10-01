@@ -4,10 +4,13 @@ import io.github.bonigarcia.wdm.WebDriverManager;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.openqa.selenium.By;
+import org.openqa.selenium.OutputType;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.TakesScreenshot;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.logging.LogType;
@@ -19,6 +22,10 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.DayOfWeek;
 import java.time.format.DateTimeFormatter;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -49,12 +56,25 @@ class FormationGhApiE2ETest {
 
     private WebDriver driver;
     private WebDriverWait wait;
+    private Path screenshotDirectory;
+    private int screenshotIndex;
 
     /**
      * Prépare le navigateur Chrome en mode headless avec la journalisation des erreurs.
      */
     @BeforeEach
-    void setUp() {
+    void setUp(TestInfo testInfo) {
+        String testName = testInfo.getTestMethod()
+                .map(method -> method.getName())
+                .orElse(testInfo.getDisplayName());
+        screenshotDirectory = Paths.get("target", "screenshots", nettoyerNom(testName));
+        try {
+            Files.createDirectories(screenshotDirectory);
+        } catch (Exception e) {
+            throw new IllegalStateException("Impossible de créer le dossier de captures d'écran", e);
+        }
+        screenshotIndex = 0;
+
         setupChromeDriver();
 
         ChromeOptions options = new ChromeOptions();
@@ -115,6 +135,7 @@ class FormationGhApiE2ETest {
     void laPageDAccueilAfficheLesUtilisateurs() {
         driver.get(APP_URL);
         attendreChargementAccueil();
+        capturerCaptureEcran("page-accueil");
 
         List<WebElement> cartesUtilisateurs = driver.findElements(By.cssSelector("a.user-card"));
         assertEquals(3, cartesUtilisateurs.size(), "La page d'accueil doit lister 3 utilisateurs");
@@ -132,6 +153,7 @@ class FormationGhApiE2ETest {
     @Test
     void unUtilisateurPeutPoserConsulterPuisSupprimerUnConge() {
         ouvrirUtilisateur(1);
+        capturerCaptureEcran("detail-utilisateur");
 
         assertTrue(driver.getTitle().contains("Jean Dupont"));
         assertTrue(driver.findElement(By.cssSelector("h1")).getText().contains("Jean Dupont"));
@@ -140,19 +162,23 @@ class FormationGhApiE2ETest {
 
         PeriodeConge periode = periodeValide();
         saisirPeriode(periode);
+        capturerCaptureEcran("periode-saisie");
         assertTrue(boutonPoserConge().isEnabled());
         boutonPoserConge().click();
 
         attendreNombreConges(1);
+        capturerCaptureEcran("conge-pose");
         assertBalance("22", "25", "3");
         assertTrue(driver.findElement(By.cssSelector(".leave-row")).getText().contains("3 jour(s) ouvré(s)"));
 
         driver.navigate().refresh();
         attendreChargementUtilisateur();
+        capturerCaptureEcran("apres-rechargement");
         assertEquals(1, nombreConges());
 
         supprimerPremierConge();
         attendreNombreConges(0);
+        capturerCaptureEcran("conge-supprime");
         assertBalance("25", "25", "0");
 
         verifierConsoleSansErreur();
@@ -164,9 +190,11 @@ class FormationGhApiE2ETest {
     @Test
     void unePeriodeSansJourOuvreEstRefusee() {
         ouvrirUtilisateur(1);
+        capturerCaptureEcran("detail-utilisateur");
 
         LocalDate samedi = prochainJour(DayOfWeek.SATURDAY);
         saisirPeriode(new PeriodeConge(samedi, samedi.plusDays(1)));
+        capturerCaptureEcran("periode-sans-jour-ouvree");
 
         assertFalse(boutonPoserConge().isEnabled());
         assertTrue(driver.findElement(By.cssSelector(".form-hint")).getText()
@@ -181,18 +209,23 @@ class FormationGhApiE2ETest {
     @Test
     void unePeriodeQuiChevaucheUnCongeAfficheUneErreur() {
         ouvrirUtilisateur(1);
+        capturerCaptureEcran("detail-utilisateur");
 
         PeriodeConge periode = periodeValide();
         saisirPeriode(periode);
+        capturerCaptureEcran("premier-conge-saisi");
         boutonPoserConge().click();
         attendreNombreConges(1);
+        capturerCaptureEcran("premier-conge-pose");
 
         saisirPeriode(periode);
+        capturerCaptureEcran("deuxieme-conge-saisi");
         boutonPoserConge().click();
 
         wait.until(ExpectedConditions.textToBePresentInElementLocated(
                 By.cssSelector(".error-message"),
                 "chevauche un congé déjà posé"));
+        capturerCaptureEcran("erreur-chevauchement");
         assertEquals(1, nombreConges());
 
         verifierConsoleSansErreur();
@@ -204,9 +237,11 @@ class FormationGhApiE2ETest {
     @Test
     void unePeriodeTropLongueDesactiveLeBouton() {
         ouvrirUtilisateur(1);
+        capturerCaptureEcran("detail-utilisateur");
 
         PeriodeConge periode = periodeTropLongue();
         saisirPeriode(periode);
+        capturerCaptureEcran("periode-trop-longue");
 
         assertFalse(boutonPoserConge().isEnabled());
         assertTrue(driver.findElement(By.cssSelector(".form-hint")).getText()
@@ -223,6 +258,7 @@ class FormationGhApiE2ETest {
         driver.get(APP_URL + "route-inconnue");
 
         wait.until(ExpectedConditions.textToBePresentInElementLocated(By.tagName("h1"), "Page introuvable"));
+        capturerCaptureEcran("page-introuvable");
         assertTrue(driver.findElement(By.tagName("body")).getText().contains("La page demandée n’existe pas."));
 
         verifierConsoleSansErreur();
@@ -356,6 +392,33 @@ class FormationGhApiE2ETest {
      */
     private void supprimerPremierConge() {
         driver.findElement(By.cssSelector(".delete-button")).click();
+    }
+
+    /**
+     * Capture une image de l'état courant du test.
+     */
+    private void capturerCaptureEcran(String etape) {
+        if (!(driver instanceof TakesScreenshot takesScreenshot)) {
+            return;
+        }
+
+        screenshotIndex++;
+        String nomFichier = String.format("%02d-%s.png", screenshotIndex, nettoyerNom(etape));
+        Path destination = screenshotDirectory.resolve(nomFichier);
+        try {
+            Files.copy(takesScreenshot.getScreenshotAs(OutputType.FILE).toPath(), destination, StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception e) {
+            throw new IllegalStateException("Impossible de capturer la capture d'écran " + nomFichier, e);
+        }
+    }
+
+    /**
+     * Nettoie un nom pour l'utiliser dans un chemin de fichier.
+     */
+    private String nettoyerNom(String valeur) {
+        return valeur.toLowerCase()
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("^-+|-+$", "");
     }
 
     private record PeriodeConge(LocalDate debut, LocalDate fin) {
