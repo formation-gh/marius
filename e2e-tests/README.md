@@ -5,17 +5,15 @@ l'application déployée sur GitHub Pages à l'adresse
 [https://aouzgaga.github.io/formation-gh-api/](https://aouzgaga.github.io/formation-gh-api/)
 se charge correctement et ne renvoie aucune erreur.
 
-## Scénario testé
+## Scénarios testés
 
-`FormationGhApiE2ETest#laPageDAccueilSeChargeSansAucuneErreur` :
-
-1. Ouvre la page d'accueil de l'application dans un navigateur Chrome headless.
-2. Attend que la page (application Blazor WebAssembly) soit entièrement chargée.
-3. Vérifie que le titre et le contenu de la page ne contiennent aucun message
-   d'erreur connu (404, "page not found", exception non gérée, etc.).
-4. Vérifie que du contenu a bien été rendu (l'application s'est chargée).
-5. Vérifie qu'aucune erreur de niveau `SEVERE` n'a été loggée dans la console
-   du navigateur (erreurs JavaScript, ressources introuvables, etc.).
+- la page d'accueil affiche bien les 3 utilisateurs de départ ;
+- la page d'un utilisateur affiche son solde, permet de poser un congé,
+  conserve les données après rechargement puis permet de supprimer le congé ;
+- une période ne contenant aucun jour ouvré est refusée ;
+- une période qui chevauche un congé existant affiche une erreur ;
+- une période trop longue désactive le bouton de validation ;
+- une route inconnue affiche la page introuvable.
 
 ## Technologies utilisées
 
