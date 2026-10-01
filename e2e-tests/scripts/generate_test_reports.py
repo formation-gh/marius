@@ -470,8 +470,9 @@ def update_history(
     history = history[-HISTORY_MAX_ENTRIES:]
 
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    HISTORY_PATH.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
-    HISTORY_REPORT_PATH.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    history_json = json.dumps(history, ensure_ascii=False, indent=2)
+    HISTORY_PATH.write_text(history_json, encoding="utf-8")
+    HISTORY_REPORT_PATH.write_text(history_json, encoding="utf-8")
 
     return history
 
@@ -862,13 +863,15 @@ APP_JS = """
       '<tbody>' + rows + '</tbody></table>';
   }
 
-  function screenshotsHtml(screenshots) {
+  function screenshotsHtml(screenshots, scenarioTitle) {
     if (!screenshots || !screenshots.length) {
       return '<p class="empty">Aucune capture d\\'écran.</p>';
     }
-    return '<div class="screenshots">' + screenshots.map(function (src) {
+    return '<div class="screenshots">' + screenshots.map(function (src, position) {
       var safeSrc = escapeAttr(src);
-      return '<a href="' + safeSrc + '" target="_blank"><img class="thumb" loading="lazy" src="' + safeSrc + '" alt=""></a>';
+      var fileName = String(src).split('/').pop();
+      var altText = escapeAttr(scenarioTitle + ' — capture ' + (position + 1) + ' (' + fileName + ')');
+      return '<a href="' + safeSrc + '" target="_blank"><img class="thumb" loading="lazy" src="' + safeSrc + '" alt="' + altText + '"></a>';
     }).join('') + '</div>';
   }
 
@@ -900,7 +903,7 @@ APP_JS = """
       '<p><strong>Détails :</strong> ' + escapeHtml(scenario.details) + '</p>' +
       '<h3>Gherkin</h3><pre class="gherkin">' + escapeHtml(scenario.gherkin) + '</pre>' +
       '<h3>Étapes</h3>' + stepsTable(scenario.steps) +
-      '<h3>Captures d\\'écran</h3>' + screenshotsHtml(scenario.screenshots);
+      '<h3>Captures d\\'écran</h3>' + screenshotsHtml(scenario.screenshots, scenario.title);
 
     var prevBtn = document.getElementById('btn-prev');
     var nextBtn = document.getElementById('btn-next');
