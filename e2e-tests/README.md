@@ -10,10 +10,20 @@ se charge correctement et ne renvoie aucune erreur.
 - la page d'accueil affiche bien les 3 utilisateurs de départ ;
 - la page d'un utilisateur affiche son solde, permet de poser un congé,
   conserve les données après rechargement puis permet de supprimer le congé ;
+- les trois fiches utilisateur sont consultables, un identifiant inconnu est signalé
+  et les congés restent isolés par utilisateur ;
 - une période ne contenant aucun jour ouvré est refusée ;
-- une période qui chevauche un congé existant affiche une erreur ;
-- une période trop longue désactive le bouton de validation ;
-- une route inconnue affiche la page introuvable.
+- les dates inversées et les chevauchements partiels ou complets sont refusés sans
+  modifier les congés ni les soldes ; une période contiguë est acceptée ;
+- une journée ouvrée et une période égale au solde disponible sont acceptées,
+  tandis que le dépassement du solde est refusé ;
+- les week-ends sont exclus du décompte et une période passée est acceptée ;
+- une route inconnue affiche la page introuvable ;
+- un mot de passe incorrect est refusé et l’absence de configuration du mot de
+  passe E2E est signalée.
+
+Le décompte actuel exclut uniquement les samedis et dimanches : aucun calendrier
+de jours fériés n'est géré. Les dates passées ne sont pas bloquées par l'application.
 
 ## Technologies utilisées
 

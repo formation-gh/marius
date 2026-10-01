@@ -185,6 +185,235 @@ class FormationGhApiE2ETest {
         });
     }
 
+    @Test
+    @DisplayName("Les trois fiches utilisateur sont consultables")
+    void lesTroisFichesUtilisateurSontConsultables() {
+        int[] identifiants = {1, 2, 3};
+        String[] noms = {"Jean Dupont", "Sophie Martin", "Luc Bernard"};
+
+        executerEtape("Consulter les trois fiches", () -> {
+            for (int index = 0; index < identifiants.length; index++) {
+                ouvrirUtilisateur(identifiants[index]);
+                assertTrue(driver.findElement(By.cssSelector("h1")).getText().contains(noms[index]));
+                assertBalance("25", "25", "0");
+            }
+            return "Les trois utilisateurs affichent leur fiche et leur solde initial";
+        });
+    }
+
+    @Test
+    @DisplayName("Un identifiant utilisateur inconnu affiche une erreur adaptée")
+    void unIdentifiantUtilisateurInconnuAfficheUneErreurAdaptee() {
+        executerEtape("Ouvrir un utilisateur inexistant", () -> {
+            ouvrirPage(APP_URL + "user/999", driver1 -> driver1.findElements(By.tagName("h1")).stream()
+                    .anyMatch(heading -> heading.getText().contains("Utilisateur introuvable")));
+            return "Fiche inexistante chargée";
+        });
+        executerEtape("Vérifier le message et le lien de retour", () -> {
+            assertTrue(driver.findElement(By.tagName("h1")).getText().contains("Utilisateur introuvable"));
+            assertTrue(driver.findElement(By.cssSelector(".back-link")).getText().contains("Tous les utilisateurs"));
+            return "Erreur adaptée et lien de retour affichés";
+        });
+    }
+
+    @Test
+    @DisplayName("Une période inversée est refusée sans modifier le solde")
+    void unePeriodeInverseeEstRefuseeSansModifierLeSolde() {
+        executerEtape("Ouvrir la fiche utilisateur", () -> {
+            ouvrirUtilisateur(1);
+            return "Utilisateur 1 chargé";
+        });
+        executerEtape("Saisir des dates inversées", () -> {
+            LocalDate lundi = prochainJour(DayOfWeek.MONDAY);
+            saisirPeriode(new PeriodeConge(lundi, lundi.minusDays(1)));
+            return "La date de fin précède la date de début";
+        });
+        executerEtape("Vérifier le refus et l'absence d'effet", () -> {
+            assertFalse(boutonPoserConge().isEnabled());
+            assertTrue(driver.findElement(By.cssSelector(".form-hint")).getText()
+                    .contains("Choisissez une période contenant au moins un jour ouvré."));
+            assertEquals(0, nombreConges());
+            assertBalance("25", "25", "0");
+            return "Aucun congé ni changement de solde";
+        });
+    }
+
+    @Test
+    @DisplayName("Une journée ouvrée peut être posée")
+    void uneJourneeOuvreePeutEtrePosee() {
+        executerEtape("Ouvrir la fiche utilisateur", () -> {
+            ouvrirUtilisateur(1);
+            return "Utilisateur 1 chargé";
+        });
+        executerEtape("Poser un congé d'un jour ouvré", () -> {
+            LocalDate lundi = prochainJour(DayOfWeek.MONDAY);
+            saisirPeriode(new PeriodeConge(lundi, lundi));
+            assertTrue(boutonPoserConge().isEnabled());
+            boutonPoserConge().click();
+            attendreNombreConges(1);
+            assertBalance("24", "25", "1");
+            return "Un jour ouvré déduit du solde";
+        });
+        executerEtape("Nettoyer le congé créé", () -> {
+            supprimerPremierConge();
+            attendreNombreConges(0);
+            assertBalance("25", "25", "0");
+            return "Solde initial rétabli";
+        });
+    }
+
+    @Test
+    @DisplayName("Le solde exact est accepté et son dépassement est refusé")
+    void leSoldeExactEstAccepteEtSonDepassementEstRefuse() {
+        executerEtape("Ouvrir la fiche utilisateur", () -> {
+            ouvrirUtilisateur(1);
+            return "Utilisateur 1 chargé avec un solde de 25 jours";
+        });
+        executerEtape("Poser exactement le solde disponible", () -> {
+            saisirPeriode(periodeDeJoursOuvres(25));
+            assertTrue(boutonPoserConge().isEnabled());
+            boutonPoserConge().click();
+            attendreNombreConges(1);
+            assertBalance("0", "25", "25");
+            return "Une période de 25 jours ouvrés est acceptée";
+        });
+        executerEtape("Vérifier le refus d'un jour supplémentaire", () -> {
+            supprimerPremierConge();
+            attendreNombreConges(0);
+            assertBalance("25", "25", "0");
+            saisirPeriode(periodeDeJoursOuvres(26));
+            assertFalse(boutonPoserConge().isEnabled());
+            assertTrue(driver.findElement(By.cssSelector(".form-hint")).getText()
+                    .contains("26 jour(s) ouvré(s) sélectionné(s)"));
+            assertEquals(0, nombreConges());
+            assertBalance("25", "25", "0");
+            return "Le dépassement ne crée aucun congé et ne modifie pas le solde";
+        });
+    }
+
+    @Test
+    @DisplayName("Les week-ends ne sont pas comptés comme jours ouvrés")
+    void lesWeekEndsNeSontPasComptesCommeJoursOuvres() {
+        executerEtape("Ouvrir la fiche utilisateur", () -> {
+            ouvrirUtilisateur(1);
+            return "Utilisateur 1 chargé";
+        });
+        executerEtape("Poser une période du vendredi au lundi", () -> {
+            LocalDate vendredi = prochainJour(DayOfWeek.FRIDAY);
+            saisirPeriode(new PeriodeConge(vendredi, vendredi.plusDays(3)));
+            assertTrue(boutonPoserConge().isEnabled());
+            boutonPoserConge().click();
+            attendreNombreConges(1);
+            assertBalance("23", "25", "2");
+            assertTrue(driver.findElement(By.cssSelector(".leave-row")).getText().contains("2 jour(s) ouvré(s)"));
+            return "Seuls le vendredi et le lundi sont décomptés";
+        });
+    }
+
+    @Test
+    @DisplayName("Une période passée peut être posée")
+    void unePeriodePasseePeutEtrePosee() {
+        executerEtape("Ouvrir la fiche utilisateur", () -> {
+            ouvrirUtilisateur(1);
+            return "Utilisateur 1 chargé";
+        });
+        executerEtape("Poser une période passée", () -> {
+            LocalDate lundiPasse = dernierLundiPasse();
+            saisirPeriode(new PeriodeConge(lundiPasse, lundiPasse.plusDays(2)));
+            assertTrue(boutonPoserConge().isEnabled());
+            boutonPoserConge().click();
+            attendreNombreConges(1);
+            assertBalance("22", "25", "3");
+            return "La période passée est acceptée conformément aux règles actuelles";
+        });
+    }
+
+    @Test
+    @DisplayName("Les chevauchements partiels sont refusés et deux périodes contiguës sont acceptées")
+    void chevauchementsPartielsRefusesEtPeriodesContiguesAcceptees() {
+        executerEtape("Ouvrir la fiche utilisateur", () -> {
+            ouvrirUtilisateur(1);
+            return "Utilisateur 1 chargé";
+        });
+        executerEtape("Poser la période de référence", () -> {
+            LocalDate lundi = prochainJour(DayOfWeek.MONDAY);
+            saisirPeriode(new PeriodeConge(lundi, lundi.plusDays(2)));
+            boutonPoserConge().click();
+            attendreNombreConges(1);
+            assertBalance("22", "25", "3");
+            return "Congé du lundi au mercredi posé";
+        });
+        executerEtape("Vérifier les chevauchements partiels", () -> {
+            LocalDate lundi = prochainJour(DayOfWeek.MONDAY);
+            for (PeriodeConge periode : List.of(
+                    new PeriodeConge(lundi.plusDays(2), lundi.plusDays(4)),
+                    new PeriodeConge(lundi.minusDays(1), lundi))) {
+                saisirPeriode(periode);
+                boutonPoserConge().click();
+                wait.until(ExpectedConditions.textToBePresentInElementLocated(
+                        By.cssSelector(".error-message"),
+                        "chevauche un congé déjà posé"));
+                assertEquals(1, nombreConges());
+                assertBalance("22", "25", "3");
+            }
+            return "Les deux recouvrements partiels sont refusés sans effet";
+        });
+        executerEtape("Poser une période contiguë", () -> {
+            LocalDate jeudi = prochainJour(DayOfWeek.MONDAY).plusDays(3);
+            saisirPeriode(new PeriodeConge(jeudi, jeudi.plusDays(1)));
+            boutonPoserConge().click();
+            attendreNombreConges(2);
+            assertBalance("20", "25", "5");
+            return "La période commençant le lendemain est acceptée";
+        });
+    }
+
+    @Test
+    @DisplayName("Les congés d'un utilisateur ne modifient pas le solde d'un autre")
+    void lesCongesDesUtilisateursRestentIsoles() {
+        executerEtape("Poser un congé à Jean Dupont", () -> {
+            ouvrirUtilisateur(1);
+            LocalDate lundi = prochainJour(DayOfWeek.MONDAY);
+            saisirPeriode(new PeriodeConge(lundi, lundi));
+            boutonPoserConge().click();
+            attendreNombreConges(1);
+            assertBalance("24", "25", "1");
+            return "Un congé posé à Jean Dupont";
+        });
+        executerEtape("Vérifier le solde de Sophie Martin", () -> {
+            ouvrirUtilisateur(2);
+            assertTrue(driver.findElement(By.cssSelector("h1")).getText().contains("Sophie Martin"));
+            assertEquals(0, nombreConges());
+            assertBalance("25", "25", "0");
+            return "Les congés et le solde de Sophie Martin sont inchangés";
+        });
+        executerEtape("Vérifier la persistance du congé de Jean Dupont", () -> {
+            ouvrirUtilisateur(1);
+            assertEquals(1, nombreConges());
+            assertBalance("24", "25", "1");
+            return "Le congé de Jean Dupont reste propre à sa fiche";
+        });
+    }
+
+    @Test
+    @DisplayName("Un mot de passe incorrect est refusé")
+    void unMotDePasseIncorrectEstRefuse() {
+        executerEtape("Ouvrir l'écran d'authentification", () -> {
+            driver.get(APP_URL);
+            wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector("input[type='password']")));
+            return "Formulaire de connexion affiché";
+        });
+        executerEtape("Soumettre un mot de passe incorrect", () -> {
+            driver.findElement(By.cssSelector("input[type='password']")).sendKeys("mot-de-passe-invalide");
+            driver.findElement(By.cssSelector(".auth-card button[type='submit']")).click();
+            wait.until(ExpectedConditions.visibilityOfElementLocated(By.cssSelector(".error-message[role='alert']")));
+            assertEquals("Mot de passe incorrect.",
+                    driver.findElement(By.cssSelector(".error-message[role='alert']")).getText());
+            assertFalse(driver.findElements(By.cssSelector(".balance-grid")).size() > 0);
+            return "L'accès est refusé et le message d'erreur est visible";
+        });
+    }
+
     /**
      * Vérifie le parcours complet de consultation, création, rechargement et suppression d'un congé.
      */
@@ -319,7 +548,7 @@ class FormationGhApiE2ETest {
         executerEtape("Capturer la fiche utilisateur", () -> "Capture enregistrée : " + capturerCaptureEcran("detail-utilisateur"));
         executerEtape("Saisir une période trop longue", () -> {
             saisirPeriode(periodeTropLongue());
-            return "Période de 41 jours saisie";
+            return "Période de 26 jours ouvrés saisie";
         });
         executerEtape("Capturer la période trop longue", () -> "Capture enregistrée : " + capturerCaptureEcran("periode-trop-longue"));
         executerEtape("Vérifier la désactivation du bouton", () -> {
@@ -404,13 +633,16 @@ class FormationGhApiE2ETest {
         }
 
         String motDePasse = System.getenv("E2E_APP_PASSWORD");
+        champsMotDePasse.get(0).sendKeys(motDePasseObligatoire(motDePasse));
+        driver.findElement(By.cssSelector(".auth-card button[type='submit']")).click();
+        wait.until(pageChargee);
+    }
+
+    static String motDePasseObligatoire(String motDePasse) {
         if (motDePasse == null || motDePasse.isBlank()) {
             throw new IllegalStateException("La variable d'environnement E2E_APP_PASSWORD est requise.");
         }
-
-        champsMotDePasse.get(0).sendKeys(motDePasse);
-        driver.findElement(By.cssSelector(".auth-card button[type='submit']")).click();
-        wait.until(pageChargee);
+        return motDePasse;
     }
 
     /**
@@ -534,11 +766,25 @@ class FormationGhApiE2ETest {
     }
 
     /**
-     * Construit une période volontairement trop longue pour déclencher la validation.
+     * Construit une période de 26 jours ouvrés, supérieure au solde initial de 25 jours.
      */
     private PeriodeConge periodeTropLongue() {
+        return periodeDeJoursOuvres(26);
+    }
+
+    private PeriodeConge periodeDeJoursOuvres(int nombreJoursOuvres) {
         LocalDate debut = prochainJour(DayOfWeek.MONDAY);
-        return new PeriodeConge(debut, debut.plusDays(40));
+        LocalDate fin = debut;
+        int joursOuvres = 0;
+        while (joursOuvres < nombreJoursOuvres) {
+            if (fin.getDayOfWeek() != DayOfWeek.SATURDAY && fin.getDayOfWeek() != DayOfWeek.SUNDAY) {
+                joursOuvres++;
+            }
+            if (joursOuvres < nombreJoursOuvres) {
+                fin = fin.plusDays(1);
+            }
+        }
+        return new PeriodeConge(debut, fin);
     }
 
     /**
@@ -548,6 +794,14 @@ class FormationGhApiE2ETest {
         LocalDate date = LocalDate.now().plusDays(1);
         while (date.getDayOfWeek() != dayOfWeek) {
             date = date.plusDays(1);
+        }
+        return date;
+    }
+
+    private LocalDate dernierLundiPasse() {
+        LocalDate date = LocalDate.now().minusDays(1);
+        while (date.getDayOfWeek() != DayOfWeek.MONDAY) {
+            date = date.minusDays(1);
         }
         return date;
     }
