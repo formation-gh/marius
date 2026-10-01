@@ -7,11 +7,20 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     defaults:
       run:
@@ -42,7 +51,11 @@ jobs:
         if: always()
         run: python3 scripts/generate_test_reports.py
 
-      - name: Upload test reports
+      - name: Publier le résumé dans le Job Summary
+        if: always()
+        run: cat e2e-tests/target/reporting/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test reports (sauvegarde)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -53,3 +66,26 @@ jobs:
             e2e-tests/target/reporting/*.docx
             e2e-tests/target/reporting/*.pdf
             e2e-tests/target/screenshots/**
+
+      - name: Configurer GitHub Pages
+        if: always() && github.event_name == 'push'
+        uses: actions/configure-pages@v5
+
+      - name: Préparer l'artefact Pages
+        if: always() && github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: e2e-tests/target/reporting
+
+      - name: Déployer le rapport sur GitHub Pages
+        if: always() && github.event_name == 'push'
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Lier le rapport publié dans le Job Summary
+        if: always() && github.event_name == 'push' && steps.deployment.outputs.page_url
+        run: |
+          {
+            echo ""
+            echo "📄 **Rapport complet (PV de recette + captures d'écran) consultable directement sur GitHub Pages :** ${{ steps.deployment.outputs.page_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"

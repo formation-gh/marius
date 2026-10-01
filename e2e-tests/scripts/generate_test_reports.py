@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import html
 import os
+import re
+import shutil
 import xml.etree.ElementTree as ET
 import zipfile
 from collections import OrderedDict
@@ -19,6 +22,10 @@ SUREFIRE_DIR = ROOT / "target" / "surefire-reports"
 XLSX_PATH = REPORT_DIR / "pv-recette-tests.xlsx"
 DOCX_PATH = REPORT_DIR / "pv-recette-tests.docx"
 PDF_PATH = REPORT_DIR / "pv-recette-tests.pdf"
+HTML_INDEX_PATH = REPORT_DIR / "index.html"
+SUMMARY_MD_PATH = REPORT_DIR / "summary.md"
+SCREENSHOTS_SOURCE_DIR = ROOT / "target" / "screenshots"
+SCREENSHOTS_REPORT_DIR = REPORT_DIR / "screenshots"
 DEFAULT_PROJECT_NAME = "formation-gh-api"
 DEFAULT_TARGET_URL = "https://aouzgaga.github.io/formation-gh-api/"
 DEFAULT_ENVIRONMENT = "Application publiée sur GitHub Pages"
@@ -85,10 +92,15 @@ def main() -> None:
     write_xlsx(XLSX_PATH, summaries, detail_rows)
     write_docx(DOCX_PATH, metadata, summaries, scenarios, detail_rows)
     write_pdf(PDF_PATH, metadata, summaries, scenarios)
+    screenshots_by_method = copy_screenshots()
+    write_html_index(HTML_INDEX_PATH, metadata, summaries, scenarios, screenshots_by_method)
+    write_summary_markdown(SUMMARY_MD_PATH, metadata, summaries)
 
     print(f"Excel généré : {XLSX_PATH}")
     print(f"Word généré : {DOCX_PATH}")
     print(f"PDF généré : {PDF_PATH}")
+    print(f"Page HTML générée : {HTML_INDEX_PATH}")
+    print(f"Résumé Markdown généré : {SUMMARY_MD_PATH}")
 
 
 def collect_metadata() -> ReportMetadata:
@@ -373,6 +385,167 @@ def scenario_status(summary: TestCaseSummary) -> str:
     if summary.steps_success > 0 and summary.steps_failure > 0:
         return "Partiel"
     return "KO"
+
+
+def copy_screenshots() -> dict[str, list[Path]]:
+    """Copie les captures d'écran dans le dossier de rapport afin qu'elles soient
+    publiables (par ex. sur GitHub Pages) aux côtés du rapport HTML, et renvoie,
+    pour chaque méthode de test, la liste des fichiers copiés (chemins relatifs
+    au dossier de rapport)."""
+    screenshots_by_method: dict[str, list[Path]] = {}
+    if not SCREENSHOTS_SOURCE_DIR.exists():
+        return screenshots_by_method
+
+    if SCREENSHOTS_REPORT_DIR.exists():
+        shutil.rmtree(SCREENSHOTS_REPORT_DIR)
+    shutil.copytree(SCREENSHOTS_SOURCE_DIR, SCREENSHOTS_REPORT_DIR)
+
+    for method_dir in sorted(SCREENSHOTS_REPORT_DIR.iterdir()):
+        if not method_dir.is_dir():
+            continue
+        images = sorted(method_dir.glob("*.png"))
+        if images:
+            screenshots_by_method[method_dir.name] = [
+                image.relative_to(REPORT_DIR) for image in images
+            ]
+
+    return screenshots_by_method
+
+
+def nettoyer_nom(name: str) -> str:
+    """Reproduit la normalisation Java `nettoyerNom` utilisée pour nommer les
+    dossiers de captures d'écran (minuscules, séquences non alphanumériques
+    remplacées par un unique tiret, tirets de bord retirés)."""
+    cleaned = re.sub(r"[^a-z0-9]+", "-", name.lower())
+    return cleaned.strip("-")
+
+
+def status_badge_color(status: str) -> str:
+    return {"OK": "#1a7f37", "Partiel": "#9a6700", "KO": "#cf222e"}.get(status, "#57606a")
+
+
+def write_html_index(
+    path: Path,
+    metadata: ReportMetadata,
+    summaries: list[TestCaseSummary],
+    scenarios: list[ScenarioReport],
+    screenshots_by_method: dict[str, list[Path]],
+) -> None:
+    """Génère une page HTML autonome qui permet de consulter directement sur
+    GitHub Pages le résultat des tests E2E (statuts, scénarios, captures
+    d'écran et liens vers les livrables), sans avoir à télécharger d'archive
+    ZIP."""
+    method_by_case = {summary.case: summary.method for summary in summaries}
+
+    rows_html = []
+    for scenario in scenarios:
+        method = method_by_case.get(scenario.title, "")
+        cleaned_method = nettoyer_nom(method)
+        screenshots = screenshots_by_method.get(cleaned_method, [])
+        thumbnails = "".join(
+            f'<a href="{html.escape(str(image))}" target="_blank">'
+            f'<img src="{html.escape(str(image))}" alt="{html.escape(image.name)}" '
+            f'class="thumb" loading="lazy"></a>'
+            for image in screenshots
+        ) or "<em>Aucune capture d'écran</em>"
+
+        rows_html.append(
+            f"""
+            <section class="scenario">
+              <h3><span class="badge" style="background:{status_badge_color(scenario.status)}">{html.escape(scenario.status)}</span>
+                  {html.escape(scenario.title)}</h3>
+              <p><strong>Objectif :</strong> {html.escape(scenario.objective)}</p>
+              <p><strong>Résultat attendu :</strong> {html.escape(scenario.expected)}</p>
+              <p><strong>Résultat obtenu :</strong> {html.escape(scenario.obtained)}</p>
+              <p><strong>Détails :</strong> {html.escape(scenario.details)}</p>
+              <div class="screenshots">{thumbnails}</div>
+            </section>
+            """
+        )
+
+    total = len(summaries)
+    success = sum(1 for summary in summaries if summary.status == "SUCCES")
+    failure = sum(1 for summary in summaries if summary.status == "ECHEC")
+    ignored = total - success - failure
+
+    content = f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>PV de recette — {html.escape(metadata.project_name)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body {{ font-family: -apple-system, Segoe UI, Arial, sans-serif; margin: 2rem; color: #1f2328; }}
+  h1 {{ margin-bottom: 0; }}
+  .meta {{ color: #57606a; margin-top: 0.25rem; }}
+  .summary {{ display: flex; gap: 1rem; margin: 1.5rem 0; }}
+  .summary div {{ padding: 0.75rem 1rem; border-radius: 6px; background: #f6f8fa; }}
+  .badge {{ color: #fff; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.85rem; margin-right: 0.5rem; }}
+  .scenario {{ border: 1px solid #d0d7de; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }}
+  .screenshots {{ display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }}
+  .thumb {{ height: 140px; border: 1px solid #d0d7de; border-radius: 4px; }}
+  a {{ color: #0969da; }}
+  .links a {{ margin-right: 1rem; }}
+</style>
+</head>
+<body>
+  <h1>PV de recette — {html.escape(metadata.project_name)}</h1>
+  <p class="meta">
+    Lot : {html.escape(metadata.lot_name)} — Version : {html.escape(metadata.version_label)} —
+    Environnement : {html.escape(metadata.environment)}<br>
+    Exécution : {html.escape(metadata.execution_reference)} — Généré le {html.escape(metadata.generation_date)}<br>
+    Application testée : <a href="{html.escape(metadata.target_url)}">{html.escape(metadata.target_url)}</a>
+  </p>
+  <div class="summary">
+    <div>Total : <strong>{total}</strong></div>
+    <div>Succès : <strong>{success}</strong></div>
+    <div>Échecs : <strong>{failure}</strong></div>
+    <div>Ignorés : <strong>{ignored}</strong></div>
+  </div>
+  <p class="links">
+    <a href="e2e-test-steps.csv">CSV détaillé</a>
+    <a href="pv-recette-tests.xlsx">Excel</a>
+    <a href="pv-recette-tests.docx">Word (PV de recette)</a>
+    <a href="pv-recette-tests.pdf">PDF (PV de recette)</a>
+  </p>
+  <h2>Scénarios</h2>
+  {"".join(rows_html) or "<p>Aucun scénario exécuté.</p>"}
+</body>
+</html>
+"""
+    path.write_text(content, encoding="utf-8")
+
+
+def write_summary_markdown(
+    path: Path,
+    metadata: ReportMetadata,
+    summaries: list[TestCaseSummary],
+) -> None:
+    """Génère un résumé Markdown destiné au Job Summary de GitHub Actions, afin
+    que le résultat soit visible directement sur la page d'exécution du
+    workflow, sans téléchargement."""
+    total = len(summaries)
+    success = sum(1 for summary in summaries if summary.status == "SUCCES")
+    failure = sum(1 for summary in summaries if summary.status == "ECHEC")
+    ignored = total - success - failure
+
+    lines = [
+        f"## PV de recette — {metadata.project_name}",
+        "",
+        f"- Exécution : {metadata.execution_reference}",
+        f"- Généré le : {metadata.generation_date}",
+        f"- Total : {total} — Succès : {success} — Échecs : {failure} — Ignorés : {ignored}",
+        "",
+        "| Statut | Scénario | Étapes réussies | Durée (ms) |",
+        "| --- | --- | --- | --- |",
+    ]
+    for summary in summaries:
+        icon = {"SUCCES": "✅", "ECHEC": "❌", "IGNORE": "⚠️"}.get(summary.status, "❔")
+        lines.append(
+            f"| {icon} {summary.status} | {summary.case} | {summary.steps_success}/{summary.steps_total} | {summary.duration_ms} |"
+        )
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def append_wrapped_field(lines: list[str], label: str, value: str, indent: str = "", width: int = 94) -> None:
